@@ -26,4 +26,8 @@ regularly, as they are cleaned-up for publication.
 
 Here is an overview of the available different modules:
 
-- `corec/`: Utilities to define partial (co)recursive functions, from [Formal Definitions and Proofs for Partial (Co)Recursive Functions](https://www.sciencedirect.com/science/article/abs/pii/S2352220824000531)
+- `theories/corec/`: Utilities to define partial (co)recursive functions, from [Formal Definitions and Proofs for Partial (Co)Recursive Functions](https://www.sciencedirect.com/science/article/abs/pii/S2352220824000531)
+- `theories/utils/`: Various utilities
+  - `Algebra.v`: Separation algebras as defined in [Local Action and Abstract Separation Logic](https://ieeexplore.ieee.org/abstract/document/4276580/)
+  - `GenId.v`: Identifier generation following a separation algebra
+  - `*Ext.v`: Various additions to existing Rocq modules
