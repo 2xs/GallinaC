@@ -22,10 +22,25 @@
 This repository contains the Rocq development of GallinaC. Files are added
 regularly, as they are cleaned-up for publication.
 
+## Usage
+
+### Programming
+
+To create an environment adapted for writing GallinaC programs, simply run
+
+```Rocq
+From GallinaC Require Import Programming
+```
+
+This will require all subpackages as needed and import them. Moreover, syntax
+scopes are also opened.
+
 ## Where to find what
 
 Here is an overview of the different modules:
 
+- `theories/gallinac/` Entry module
+  - `Programming.v`: Export modules required for programming
 - `theories/corec/`: Utilities to define partial (co)recursive functions, from [Formal Definitions and Proofs for Partial (Co)Recursive Functions](https://www.sciencedirect.com/science/article/abs/pii/S2352220824000531)
 - `theories/utils/`: Various utilities
   - `Algebra.v`: Separation algebras as defined in [Local Action and Abstract Separation Logic](https://ieeexplore.ieee.org/abstract/document/4276580/)

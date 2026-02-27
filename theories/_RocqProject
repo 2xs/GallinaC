@@ -1,3 +1,4 @@
 -R ./corec Corec
 -R ./utils Utils
 -R ./imp Imp
+-R ./gallinac GallinaC
