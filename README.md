@@ -24,10 +24,22 @@ regularly, as they are cleaned-up for publication.
 
 ## Where to find what
 
-Here is an overview of the available different modules:
+Here is an overview of the different modules:
 
 - `theories/corec/`: Utilities to define partial (co)recursive functions, from [Formal Definitions and Proofs for Partial (Co)Recursive Functions](https://www.sciencedirect.com/science/article/abs/pii/S2352220824000531)
 - `theories/utils/`: Various utilities
   - `Algebra.v`: Separation algebras as defined in [Local Action and Abstract Separation Logic](https://ieeexplore.ieee.org/abstract/document/4276580/)
   - `GenId.v`: Identifier generation following a separation algebra
   - `*Ext.v`: Various additions to existing Rocq modules
+- `theories/imp/`: Building blocks for shallowly embedded imperative programming
+  - `Monad.v`: Our `program` monad with state, failure and non-termination effects
+  - `While.v`: Definition of the `while` loop using the `corec` library
+  - `Primitives.v`: All GallinaC primitives
+  - `PrimitivesProp.v`: Properties of GallinaC primitives
+  - `Pointer.v`: Pointer library with provenance tracking
+  - `Memval.v`: Values which may be stored in memory
+  - `Heap.v`: Heap memory
+  - `Store.v`: Store memory
+  - `Intops.v`: Building-blocks to extend any type with bounded integer semantics
+  - `Uint32.v`: Rocq `nat` type with C-style `uint32_t` semantics
+  - `Uintptr.v`: Rocq `N` type with C-style `uintptr_t` semantics
