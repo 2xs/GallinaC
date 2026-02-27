@@ -3,3 +3,4 @@
 -R ./imp Imp
 -R ./compiler Compiler
 -R ./gallinac GallinaC
+-R ./examples Examples

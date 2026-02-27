@@ -33,7 +33,8 @@ From GallinaC Require Import Programming
 ```
 
 This will require all subpackages as needed and import them. Moreover, syntax
-scopes are also opened.
+scopes are also opened. See file `theories/examples/Reverse/Reverse.v` for an
+example.
 
 ## Where to find what
 
@@ -41,6 +42,8 @@ Here is an overview of the different modules:
 
 - `theories/gallinac/` Entry module
   - `Programming.v`: Export modules required for programming
+- `theories/examples/Reverse` Example with in-place linked-list reversal
+  - `Reverse.v`: Definition of the `reverse` program
 - `theories/corec/`: Utilities to define partial (co)recursive functions, from [Formal Definitions and Proofs for Partial (Co)Recursive Functions](https://www.sciencedirect.com/science/article/abs/pii/S2352220824000531)
 - `theories/utils/`: Various utilities
   - `Algebra.v`: Separation algebras as defined in [Local Action and Abstract Separation Logic](https://ieeexplore.ieee.org/abstract/document/4276580/)
