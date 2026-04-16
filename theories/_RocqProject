@@ -1,6 +1,0 @@
--R ./corec Corec
--R ./utils Utils
--R ./imp Imp
--R ./compiler Compiler
--R ./gallinac GallinaC
--R ./examples Examples

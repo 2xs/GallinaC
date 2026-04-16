@@ -1,0 +1,8 @@
+-R theories GallinaC
+
+theories/Corec/
+theories/Utils/
+theories/Imp/
+theories/Compiler/
+theories/Programming.v
+theories/Compiler.v

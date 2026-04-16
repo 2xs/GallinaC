@@ -4,3 +4,7 @@
 *.vo
 *.vok
 *.vos
+Makefile.rocq
+.Makefile.rocq.d
+Makefile.rocq.conf
+extraction
