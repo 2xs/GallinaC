@@ -1,6 +1,6 @@
 From GallinaC Require Import Programming.
 
-From Examples.Reverse Require Import Reverse.
+From GallinaC.Examples.Reverse Require Import Reverse.
 Import List ListNotations.
 
 Definition init_state: Primitives.State ListStore list_heap_heap := Primitives.mkState Store.emp (Heap.emp_with_alc (mkOptAlloc (Some 0%nat))).

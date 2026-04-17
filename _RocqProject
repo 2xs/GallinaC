@@ -1,4 +1,5 @@
--R theories GallinaC
+-R theories/ GallinaC
+-R examples/ GallinaC.Examples
 
 theories/Corec/
 theories/Utils/
