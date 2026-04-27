@@ -67,11 +67,11 @@ Inductive inj_value {St} (inj: @injection St): value -> Values.val -> Prop :=
 | inj_ptr_null: inj_value inj (v_ptr None) (Values.Vnullptr)
 .
 
-Definition memval_memsize :=
-  Nat.max (Memdata.size_chunk_nat AST.Mptr)
-    (Nat.max
-       (Memdata.size_chunk_nat AST.Mint32)
-       (Memdata.size_chunk_nat AST.Mbool)).
+Definition memval_memsize: nat :=
+  (Nat.max (Memdata.size_chunk_nat AST.Mptr)
+     (Nat.max
+        (Memdata.size_chunk_nat AST.Mint32)
+        (Memdata.size_chunk_nat AST.Mbool))).
 
 Record wf {St: Store} {Hp: Heap}
   (s: Primitives.State St Hp) (m: Memory.mem) (inj: @injection St): Prop :=
@@ -128,7 +128,7 @@ Arguments mem_contents_of_store [St Hp s m inj].
 Arguments mem_contents_of_fun [St Hp s m inj].
 Arguments mem_perm_of_store [St Hp s m inj].
 
-Definition xtype_of_type (t: type): option AST.xtype :=
+Definition type_to_xtype (t: type): option AST.xtype :=
   match t with
   | t_unit => None (* AST.Xvoid *)
   | t_bool => Some AST.Xbool
@@ -138,16 +138,28 @@ Definition xtype_of_type (t: type): option AST.xtype :=
   | t_fun _ _ => Some AST.Xptr
   end.
 
-Definition type_of_xtype (t: AST.xtype): option type :=
+Definition xtype_to_type (t: AST.xtype): option type :=
   match t with
   | AST.Xbool => Some t_bool
-  | AST.Xint => if Archi.ptr64 then None else Some t_nat
-  | AST.Xlong => if Archi.ptr64 then Some t_nat else None
+  | AST.Xint => Some t_nat
   | AST.Xptr => Some t_ptr
-  | _ => None
+  | AST.Xvoid => Some t_unit
+  | AST.Xint8signed | AST.Xint8unsigned
+  | AST.Xint16signed | AST.Xint16unsigned
+  | AST.Xfloat | AST.Xsingle
+  | AST.Xany32 | AST.Xany64
+  | AST.Xlong
+    => None
   end.
 
-Definition offset_to_offset (offset: nat) := Z.of_nat (offset * memval_memsize).
+Inductive type_of_xtype: AST.xtype -> type -> Prop :=
+| tox_bool: type_of_xtype AST.Xbool t_bool
+| tox_int: type_of_xtype AST.Xint t_nat
+| tox_ptr: type_of_xtype AST.Xptr t_ptr
+| tox_void: type_of_xtype AST.Xvoid t_unit
+.
+
+Definition offset_to_offset (offset: Z): Z := (offset * Z.of_nat memval_memsize).
 
 Module Facts.
 
@@ -238,13 +250,12 @@ Module Facts.
   Qed.
   Hint Resolve type_sized_mem_chunk: deep_gallinac.
 
-  Lemma store_memsize_bounds: forall t mc, type_mem_chunk t = Some mc -> Memdata.size_chunk_nat mc <= memval_memsize.
+  Lemma store_memsize_bounds: forall t mc, type_mem_chunk t = Some mc -> (Memdata.size_chunk_nat mc <= memval_memsize).
   Proof.
     intros t mc Hmemchunk.
     destruct t; inversion Hmemchunk; subst; try discriminate; unfold memval_memsize; cbn; try (lia).
   Qed.
   Hint Resolve store_memsize_bounds: deep_gallinac.
-
 
   Lemma store_memsize_bounded: memval_memsize <= 8.
   Proof.

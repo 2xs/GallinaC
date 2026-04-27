@@ -7,7 +7,7 @@ From GallinaC.Utils Require Import ListExt.
 From GallinaC.Compiler.Deep Require Export Cmd.
 From GallinaC.Compiler.Reify Require Export Common Types Env Expr.
 
-Import MRMonadNotation.
+Import MonadNotation.
 Local Open Scope bs_scope.
 
 Polymorphic Fixpoint translate_args (renv: reify_funbody_env) (tms: list term): TemplateMonad (list expr) :=
@@ -19,12 +19,23 @@ Polymorphic Fixpoint translate_args (renv: reify_funbody_env) (tms: list term): 
       tmEval cbv (arg::args)
   end.
 
+Definition add_2 (n: nat) := n + 2.
+Definition mul_3 (n: nat) := n * 3.
+Definition add_mul (n: nat) := add_2 (mul_3 n).
+
+Inductive ast: Set :=
+| Var: ast
+| Const: nat -> ast
+| Add: ast -> ast -> ast
+| Mul: ast -> ast -> ast
+.
+
 Polymorphic Fixpoint translate_cmd (renv: reify_funbody_env) (tm: term): TemplateMonad (cmd * reify_funbody_env) :=
   match tm with
   | tApp f args =>
       (* Application *)
       match f with
-      | tConst (path, f) _ =>
+      | tConst ((path, f) as kname) _ =>
           match resolve_modpath renv path with
           | ImpMonad =>
               match resolve_monad_primitive f with
@@ -195,30 +206,25 @@ Polymorphic Fixpoint translate_cmd (renv: reify_funbody_env) (tm: term): Templat
               | _ => tmFail "translate_cmd: while: malformed arguments"
               end
           | CurrentModule =>
-              (*   | tApp (tRel i) [tm] => *)
-              (*       e <- translate_expr renv tm ;; *)
-              (*       c <- match resolve_rel_fun renv i with *)
-              (*            | Some (_, (i, _)) => tmReturn (c_app i [ e ], renv) *)
-              (*            | None => tmFail "Error in translate_cmd: invalid function" *)
-              (*            end *)
-              (*       ;; *)
-              (*       tmEval cbv c *)
               args <- translate_args renv args ;;
-              c <- match resolve_named_fun renv f with
+              c <- match resolve_named_internal renv kname with
                    | Some (i, _) => tmReturn (c_app i args, renv)
                    | None => tmFail "Error in translate_cmd: invalid function"
                    end
               ;;
               tmEval cbv c
-          | Other _ => tmPrint path;; tmFail "translate_cmd: Unknown application modpath"
+          | Other =>
+              args <- translate_args renv args ;;
+              '(i, ef, renv) <- resolve_named_external renv kname;;
+              tmEval cbv (c_app i args, renv)
           end
       | _ => tmFail "TODO3"
       end
-  | tConst ((modpath, f_name) as kname) _ =>
+  | tConst ((modpath, _) as kname) _ =>
       match resolve_modpath renv modpath with
       | CurrentModule =>
           c <-
-            match resolve_named_fun renv f_name with
+            match resolve_named_internal renv kname with
             | Some (i, _) => tmReturn (c_app i [], renv)
             | None => tmFail "Error in translate_cmd: invalid function"
             end
@@ -352,8 +358,8 @@ Polymorphic Fixpoint translate_cmd (renv: reify_funbody_env) (tm: term): Templat
 (*       tmFail "Error in translate_cmd: not a command" *)
 (*   end. *)
 
-Fixpoint translate_cmd' renv (tm : term) : TemplateMonad (cmd * reify_funbody_env) :=
-  match tm with
-  | tLambda _ _ tm' => translate_cmd' renv tm'
-  | _ => translate_cmd renv tm
-  end.
+(* Fixpoint translate_cmd' renv (tm : term) : TemplateMonad (cmd * reify_funbody_env) := *)
+(*   match tm with *)
+(*   | tLambda _ _ tm' => translate_cmd' renv tm' *)
+(*   | _ => translate_cmd renv tm *)
+(*   end. *)

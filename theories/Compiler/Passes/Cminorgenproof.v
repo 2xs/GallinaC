@@ -8,6 +8,8 @@ From compcert.lib Require Import Coqlib Integers Maps.
 From compcert.cfrontend Require Cminorgenproof.
 From compcert.backend Require Cminor.
 
+From GallinaC.Utils Require NExt.
+
 From GallinaC.Imp Require Import Store Heap Intops Uint32 Uintptr.
 
 From GallinaC.Compiler.Common Require Import Types(t_nat).
@@ -279,10 +281,9 @@ Section EXPRESSIONS_HELPER.
     - inversion Htransl_sized; subst; clear Htransl_sized.
       inversion Heval; subst.
       destruct (Archi.ptr64) eqn:Earchi;
-        eexists; (split; [ unfold make_size_t; rewrite Earchi; now constructor | ];
-                  specialize Uintptr.CompCert.unsigned_range_cc as Hrange; rewrite Earchi in Hrange).
-      constructor; [ auto | rewrite Earchi; eexists; split; [ | eauto ]; now apply Int64.unsigned_repr, Hrange ].
-      constructor; [ auto | rewrite Earchi; eexists; split; [ | eauto ]; now apply Int.unsigned_repr, Hrange ].
+        eexists; (split; [ unfold make_size_t; rewrite Earchi; now constructor | constructor; [ assumption | rewrite Earchi ] ]).
+      specialize (Unsigned.CompCert.Ptrofs.unsigned_range_cc_64 (UInt := n_ofst_t) eq_refl Earchi) as RANGE; eexists; split; [ | eauto ]; now apply Int64.unsigned_repr, RANGE.
+      specialize (Unsigned.CompCert.Ptrofs.unsigned_range_cc_32 (UInt := n_ofst_t) eq_refl Earchi) as RANGE; eexists; split; [ | eauto ]; now apply Int.unsigned_repr, RANGE.
     - inversion Htransl_sized; subst.
       inversion Heval; subst; clear Heval.
       exists Values.Vnullptr.
@@ -476,16 +477,9 @@ Local Ltac simpl_pop_stack :=
   | Hpop_stack : Semantics.pop_stack ?sp ?stackspace ?s ?m ?inj = Some (?s', ?m', ?inj') |- _ =>
       unfold Semantics.pop_stack in Hpop_stack;
       destruct (Memory.Mem.free m sp _ _) as [ m_free | ] eqn:Efree; [ | discriminate ];
-      destruct (NatExt.iter_opt _ _ _) as [ st' | ] eqn:Eiter_opt; [ | discriminate ];
+      destruct (NExt.iter_opt _ _ _) as [ st' | ] eqn:Eiter_opt; [ | discriminate ];
       inversion Hpop_stack; subst; clear Hpop_stack
   end.
-(* match goal with *)
-(* | Hpop_stack : @Semantics.pop_stack _ _ ?sp _ ?s ?m ?inj = Some (?s', ?m', ?inj') |- _ => *)
-(*     unfold Semantics.pop_stack in Hpop_stack; *)
-(*     destruct (Memory.Mem.free m sp _ _) as [ m_free | ] eqn:Efree; [ | discriminate ]; *)
-(*     destruct (ListExt.fold_left_opt _ _ _) as [ st' | ] eqn:fold_left_pop; [ | discriminate ]; *)
-(*     inversion Hpop_stack; subst; clear Hpop_stack *)
-(* end. *)
 
 Section TRANSLATION_HELPER.
 
@@ -567,7 +561,7 @@ Section TRANSLATION_HELPER.
     (MFD: match_fundef cu fd tfd)
     (LO: linkorder cu prog)
     (Hwt_app: @Typing.wt_cmd ctx (Cmd.c_app f_id t_out args) t_out)
-    : Cminor.funsig tfd = make_signature (map snd args) t_out.
+    : Cminor.funsig tfd = mk_signature (map snd args) t_out.
   Proof.
     inversion MFD as [ ?f ?tf ?Htransl | ]; subst.
     - apply bind_inversion in Htransl as ( tbody & Htransl_body & Htransl ).
@@ -581,7 +575,7 @@ Section TRANSLATION_HELPER.
          unfold Genv.find_funct_ptr in Hfind_funct_ptr;
          rewrite Hfind_fn in Hfind_funct_ptr;
          congruence); subst.
-      destruct tf, f; unfold make_signature, Prog.signature_of_signature in *; cbn in *;
+      destruct tf, f; unfold Prog.signature_of_signature in *; cbn in *;
         inversion Htransl; subst; clear Htransl.
       congruence.
     - inversion Hwt_app; subst.
@@ -933,6 +927,15 @@ Section TRANSLATION.
     reflexivity.
   Qed.
 
+  Lemma sig_preserved_external:
+    forall ef sig,
+      ext_funsig ef sig -> Cminor.funsig (AST.External ef) = sig.
+  Proof using TRANSL.
+    intros ef sig SIG.
+    inversion SIG; subst; try reflexivity.
+    - destruct t_arg; inversion H; subst; reflexivity.
+  Qed.
+
   Lemma sig_preserved_transl:
     forall f i tf sig,
       Prog.funsig f sig ->
@@ -947,7 +950,8 @@ Section TRANSLATION.
         inversion Heq; subst; clear Heq.
       eapply sig_preserved_transl_body; eauto.
     - intros Heq; inversion Heq; subst; clear Heq.
-      now inversion Hfunsig; subst.
+      inversion Hfunsig; subst.
+      now apply sig_preserved_external.
   Qed.
 
   Lemma sig_preserved_match:
@@ -956,7 +960,8 @@ Section TRANSLATION.
     intros p f tf sig Hsig Hmatch.
     inversion Hmatch; subst; inversion Hsig; subst; try reflexivity.
     unfold transl_function in H.
-    eapply sig_preserved_transl_body; eauto.
+    now eapply sig_preserved_transl_body; eauto.
+    now eapply sig_preserved_external.
   Qed.
 
   Lemma transl_initial_states:
@@ -994,6 +999,7 @@ Section TRANSLATION.
           destruct fn_params; [ | discriminate ]; clear H1.
           constructor.
           constructor.
+          inversion SIG.
         * constructor; constructor.
       + (inversion Hmatch_fundef; subst); [ | reflexivity ].
         inversion Hlo; subst.
@@ -1265,7 +1271,7 @@ Section TRANSLATION.
               (Prog.signature_of_signature (Prog.fn_signature fn))
               (params_of_function fn)
               (vars_of_function fn)
-              (Z.of_nat fn.(fn_extra).(fn_stackspace))
+              fn.(fn_extra).(fn_stackspace)
               tbody)
            tbody tk
         (* (Cminor.set_locals (vars_of_function f) (Cminor.set_params vargs f.(fn_params))) *)
@@ -1276,6 +1282,8 @@ Section TRANSLATION.
         * admit. (* eapply margs_has_argtype_list; eauto. *)
         * apply Halloc_sp.
       + admit.
+    - intros T1 Hmatch_states.
+      admit.
     - intros T1 Hmatch_states.
       inversion Hmatch_states; subst.
       inversion MK; subst.

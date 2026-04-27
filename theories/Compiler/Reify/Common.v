@@ -6,17 +6,17 @@ From GallinaC.Compiler.Reify Require Export Env.
 
 Local Open Scope bs_scope.
 
-Polymorphic Inductive ModuleResolution := ImpMonad | ImpPrimitives | ImpWhile | CurrentModule | Other (path: modpath).
+Polymorphic Inductive ModuleResolution := ImpMonad | ImpPrimitives | ImpWhile | CurrentModule | Other.
 
 Polymorphic Definition resolve_modpath (renv: reify_program_env) (path: modpath): ModuleResolution :=
   match path with
-  | MPfile ["Monad"; "Imp"] => ImpMonad
-  | MPfile ["Primitives"; "Imp"] => ImpPrimitives
-  | MPfile ["While"; "Imp"] => ImpWhile
+  | MPfile ["Monad"; "Imp"; "GallinaC"] => ImpMonad
+  | MPfile ["Primitives"; "Imp"; "GallinaC"] => ImpPrimitives
+  | MPfile ["While"; "Imp"; "GallinaC"] => ImpWhile
   | path =>
       match ModPathComp.compare path renv.(current_module) with
       | Eq => CurrentModule
-      | _ => Other path
+      | _ => Other
       end
   end.
 

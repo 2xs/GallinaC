@@ -16,6 +16,14 @@ From GallinaC Require Import Compiler.
 
 (* Full program reification is done by reifying a module *)
 
-MetaRocq Run (reify_program "Reverse" "main" "deep_reverse_prog").
+MetaRocq Run (reify_program "Reverse.Reverse" "main" "deep_reverse_prog").
 
-Print deep_reverse_prog.
+(* Uncomment this to print the reified program *)
+(* As can be seen, the function outside the module is not extracted, but kept "opaque" *)
+(* This enables to have different functions between the Rocq model and the actual C code *)
+(* From Stdlib.Strings Require Import String. *)
+
+(* Local Open Scope char_scope. *)
+(* Local Open Scope string_scope. *)
+
+(* Print deep_reverse_prog. *)

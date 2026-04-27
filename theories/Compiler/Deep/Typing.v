@@ -122,6 +122,7 @@ Inductive wt_cmd: ctxt (type * bool) Empty_set fundef vardef -> cmd -> type -> P
     wt_expr ty_ctxt.(ctxt_pure) e t -> ground t ->
     wt_cmd ty_ctxt (c_write_var n t e) t_unit
 | wt_alloc_ptr : forall ty_ctxt n t e,
+    wt_expr ty_ctxt.(ctxt_pure) n t_ofst ->
     wt_expr ty_ctxt.(ctxt_pure) e t -> ground t ->
     wt_cmd ty_ctxt (c_alloc_ptr n t e) t_ptr
 | wt_read_ptr : forall ty_ctxt t p,

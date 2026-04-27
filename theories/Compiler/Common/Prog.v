@@ -1,6 +1,6 @@
 From Stdlib Require Import ZArith.
 
-From compcert.common Require AST Globalenvs.
+From compcert.common Require AST Globalenvs Events.
 Import Globalenvs(Genv.t).
 
 From GallinaC.Utils Require Import ListExt.
@@ -40,8 +40,8 @@ Record signature: Set :=
 
 Definition signature_of_signature (s: signature): AST.signature :=
   AST.mksignature
-    (ListExt.filter_map xtype_of_type s.(sig_args))
-    (ssrfun.Option.default AST.Xvoid (xtype_of_type s.(sig_res)))
+    (ListExt.filter_map type_to_xtype s.(sig_args))
+    (ssrfun.Option.default AST.Xvoid (type_to_xtype s.(sig_res)))
     AST.cc_default.
 Coercion signature_of_signature: signature >-> AST.signature.
 
@@ -51,10 +51,19 @@ Definition fn_signature [cmd extra: Set] (f: function cmd extra): signature :=
     f.(fn_return)
 .
 
+Inductive ext_funsig: AST.external_function -> signature -> Prop :=
+| funsig_external: forall nm t_arg xt, CCInj.type_to_xtype t_arg = Some xt ->  ext_funsig (AST.EF_external nm (AST.mksignature [xt] AST.Xvoid AST.cc_default)) {| sig_args := [t_arg]; sig_res := t_unit; |}
+| funsig_malloc: ext_funsig AST.EF_malloc {| sig_args := [t_ofst]; sig_res := t_ptr; |}
+| funsig_free: ext_funsig AST.EF_free {| sig_args := [t_ptr]; sig_res := t_unit; |}
+.
+
 Inductive funsig {cmd extra: Set}: (fundef cmd extra) -> signature -> Prop :=
 | funsig_Internal: forall f, funsig (AST.Internal f) (fn_signature f)
-| funsig_malloc: funsig (AST.External AST.EF_malloc) (mk_signature [t_ofst] t_ptr)
-| funsig_free: funsig (AST.External AST.EF_free) (mk_signature [t_ptr] t_unit)
+| funsig_External: forall ef sig (SIG: ext_funsig ef sig), funsig (AST.External ef) sig
+(* | funsig_External: forall ef t_args t_out *)
+(*                           (ToX_args: List.Forall2 type_of_xtype (AST.ef_sig ef).(AST.sig_args) t_args) *)
+(*                           (ToX_out: type_of_xtype (AST.ef_sig ef).(AST.sig_res) t_out), *)
+(*     funsig (AST.External ef) (mk_signature t_args t_out) *)
 .
 
 Definition globdef cmd extra := (AST.globdef (fundef cmd extra) vardef).
@@ -66,9 +75,6 @@ Record program (cmd f_extra p_extra: Set) :=
       prog_defs: list (AST.ident * (globdef cmd f_extra));
       prog_public: list AST.ident;
       prog_main: AST.ident;
-      (* prog_malloc: option AST.ident; *)
-      (* prog_free: option AST.ident; *)
-      (* prog_next_id : AST.ident; *)
       prog_extra: p_extra;
     }.
 Arguments mkprogram [cmd f_extra p_extra] .

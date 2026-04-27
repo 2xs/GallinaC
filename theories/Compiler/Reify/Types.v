@@ -4,7 +4,7 @@ From GallinaC.Utils Require Import ListExt.
 
 From GallinaC.Compiler.Common Require Export Types.
 
-Import MRMonadNotation.
+Import MonadNotation.
 Local Open Scope bs_scope.
 
 Module E_reify_type.

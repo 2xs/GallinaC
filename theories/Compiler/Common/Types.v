@@ -91,12 +91,12 @@ Inductive sized: type -> Prop :=
 | sized_ptr: sized t_ptr
 .
 
-Definition ground_dec (t : type) : {ground t}+{~ground t}.
+Definition ground_dec (t : type) : {ground t} + {~ground t}.
 Proof.
   destruct t; now repeat constructor.
 Defined.
 
-Definition nonground_dec (t: type): {nonground t}+{~nonground t}.
+Definition nonground_dec (t: type): {nonground t} + {~nonground t}.
 Proof.
   destruct t; now repeat constructor.
 Defined.

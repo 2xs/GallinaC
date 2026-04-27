@@ -7,7 +7,7 @@ From GallinaC.Utils Require Import ListExt.
 From GallinaC.Compiler.Common Require Export Expr.
 From GallinaC.Compiler.Reify Require Export Types Env.
 
-Import MRMonadNotation.
+Import MonadNotation.
 Local Open Scope bs_scope.
 
 Fixpoint translate_expr (renv: reify_funbody_env) (tm : term) : TemplateMonad expr :=

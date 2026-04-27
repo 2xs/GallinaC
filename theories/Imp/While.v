@@ -51,8 +51,6 @@ Proof.
   reflexivity.
 Qed.
 
-
-
 Definition whileF {S : Type}
   (cond : program S bool) (W : program S unit -> program S unit)
   (body : program S unit) : program S unit :=

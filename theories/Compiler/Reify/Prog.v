@@ -7,7 +7,7 @@ From GallinaC.Utils Require Import ListExt.
 From GallinaC.Compiler.Deep Require Import Prog.
 From GallinaC.Compiler.Reify Require Export Common Types Env Expr Cmd.
 
-Import MRMonadNotation.
+Import MonadNotation.
 Local Open Scope bs_scope.
 
 Polymorphic Fixpoint allocate_args_id renv (args: list (string * type)): TemplateMonad (list (string * (AST.ident * type)) * reify_program_env) :=
@@ -34,24 +34,25 @@ Polymorphic Fixpoint translate_funbody (renv: reify_funbody_env) (body : term) :
       translate_cmd renv body
   end.
 
-Polymorphic Definition translate_function (renv: reify_program_env) (mr_id: ident) (args: list (string * type)) (t_out: type) (body : term) : TemplateMonad reify_program_env :=
+Polymorphic Definition translate_function (renv: reify_program_env) (mr_id: kername) (args: list (string * type)) (t_out: type) (body : term) : TemplateMonad reify_program_env :=
   '(params, renv) <- allocate_args_id renv args;;
   params <- tmEval cbv params;;
   renv <- mk_reify_funbody_env renv params;;
   '(body, renv) <- translate_funbody renv body;;
   tfunction <- tmEval cbv
-                      {|
-                        fn_return := t_out;
-                        fn_params := List.map snd params;
-                        fn_temps := renv.(temps);
-                        fn_body := body;
-                        fn_extra := tt;
-      |};;
+                 (AST.Internal
+                    {|
+                      fn_return := t_out;
+                      fn_params := List.map snd params;
+                      fn_temps := renv.(temps);
+                      fn_body := body;
+                      fn_extra := tt;
+                    |});;
   tmEval cbv (push_fun renv mr_id tfunction).
 
 Polymorphic Fixpoint translate_module (renv: reify_program_env) (module: list global_reference): TemplateMonad reify_program_env :=
   match module with
-  | ConstRef ((_, f_name) as kname)::module =>
+  | ConstRef kname::module =>
       tm <- tmUnquote (tConst kname []);;
       f_sig <- tmEval cbn tm.(my_projT1);;
       f_sig <- tmQuote f_sig;;
@@ -59,7 +60,7 @@ Polymorphic Fixpoint translate_module (renv: reify_program_env) (module: list gl
       body <- tmEval cbn tm.(my_projT2);;
       body <- tmEval (unfold kname) body;;
       body <- tmQuote body;;
-      renv <- translate_function renv f_name args t_out body;;
+      renv <- translate_function renv kname args t_out body;;
       translate_module renv module
   | [] => tmReturn renv
   | gref::_ => tmMsg "translate_module: Unsupported global reference";; tmPrint gref;; tmFail ""
@@ -69,16 +70,29 @@ Polymorphic Definition reify_program (module main boundname: qualid): TemplateMo
   path <- tmLocateModule1 module;;
   M <- tmQuoteModule module;;
   renv <- translate_module (init_reify_env path) M;;
-  match List.find (fun '(mr_id, _) => String.eqb mr_id main) renv.(funs) with
-  | Some (_, (id_main, _)) =>
+  gref_main <- tmLocate1 main;;
+  match gref_main with
+  | ConstRef kn_main =>
+      match List.find (fun '(mr_id, _) => Kernames.eq_constant mr_id kn_main) renv.(funs) with
+      | Some (_, (id_main, _)) =>
       prog <-
         tmEval cbv
                {|
-                 prog_defs := List.rev (List.map (fun '(_, (gc_id, f)) => (gc_id, AST.Gfun (AST.Internal f))) renv.(funs));
-                 prog_public := [id_main];
+                 prog_defs := List.rev (List.map (fun '(_, (gc_id, f)) => (gc_id, AST.Gfun f)) renv.(funs));
+                 prog_public := List.map (fun x => fst (snd x)) renv.(funs);
                  prog_main := id_main;
                  prog_extra := {| prog_next_id := renv.(next_id); |};
                |};;
-      tmDefinition boundname prog
-  | None => tmFail "Unable to find main function"
+      tmDefinition boundname prog;;
+      symbols <- tmEval cbv
+                   (List.map
+                      (fun '((_, mr_id), (cc_id, _)) => (String.to_string mr_id, cc_id))
+                      renv.(funs));;
+      tmDefinition (boundname ++ "_symbols") symbols;;
+      tmReturn prog
+      | None => tmFail "Unable to find main function"
+      end
+  | _ => tmMsg "Provided main: ";; tmPrint main;;
+         tmMsg "Inferred global reference: ";; tmPrint gref_main;;
+         tmFail "Unhandled case"
   end.

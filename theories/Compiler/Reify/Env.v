@@ -7,7 +7,9 @@ From compcert.common Require AST.
 From GallinaC.Utils Require Import ListExt.
 From GallinaC.Compiler.Common Require Import Types.
 From GallinaC.Compiler.Deep Require Import Cmd Prog.
+From GallinaC.Compiler.Reify Require Import Types.
 
+Import MonadNotation.
 Local Open Scope bs_scope.
 
 Inductive binding: Set :=
@@ -26,11 +28,18 @@ Definition binding_to_string bind: string :=
 Record reify_program_env :=
   {
     next_id : AST.ident;
-    funs : list (ident * (AST.ident * function));
+    funs : list (kername * (AST.ident * fundef));
     current_module : modpath;
   }.
 
-Definition init_reify_env module : reify_program_env := {| next_id := 1%positive; funs := []; current_module := module; |}.
+Definition init_reify_env module : reify_program_env :=
+  {|
+    next_id := 3%positive;
+    funs := [
+      ((MPfile [], "malloc"), (1%positive, AST.External AST.EF_malloc));
+      ((MPfile [], "free"), (2%positive, AST.External AST.EF_free))
+    ];
+    current_module := module; |}.
 
 Record reify_funbody_env: Type :=
   {
@@ -45,7 +54,7 @@ Definition reify_funbody_env_to_string (renv: reify_funbody_env): string :=
     ("next_id: " ++ string_of_positive renv.(next_id) ++ nl) ++
     ("stack: [ " ++ List.fold_left (fun acc b => acc ++ binding_to_string b ++ ", ") renv.(stack) "" ++ " ]" ++ nl) ++
     ("stack_depth: " ++ string_of_nat renv.(stack_depth) ++ nl) ++
-    ("funs: [ " ++ List.fold_left (fun acc '(i0, (i1, t)) => acc ++ i0 ++ " " ++ string_of_positive i1 ++ ", ") renv.(funs) "" ++ " ]" ++ nl) ++
+    ("funs: [ " ++ List.fold_left (fun acc '(i0, (i1, t)) => acc ++ (string_of_kername i0) ++ " " ++ string_of_positive i1 ++ ", ") renv.(funs) "" ++ " ]" ++ nl) ++
     "<<<<<<<<<<"
 .
 
@@ -60,13 +69,61 @@ Definition resolve_rel_temp renv n :=
   | (Some (Param _ id _ | Temp _ id _)) as x => Some id
   | _ => None
   end.
-Definition resolve_rel_fun renv := resolve_rel renv.(funs).
+(* Definition resolve_rel_fun renv := resolve_rel renv.(funs). *)
 Definition resolve_named_temp renv nm :=
   match List.find (match_name nm) renv.(stack) with
   | (Some (Param _ id _ | Temp _ id _)) as x => Some id
   | _ => None
   end.
-Definition resolve_named_fun renv nm := ListExt.sfind StringOTOrig.eq_dec nm renv.(funs).
+Definition resolve_named_internal renv nm :=
+  match ListExt.sfind KernameSet.E.eq_dec nm renv.(funs) with
+  | Some (id, AST.Internal f) => Some (id, f)
+  | _ => None
+  end.
+Definition resolve_named_external' renv nm :=
+  match ListExt.sfind KernameSet.E.eq_dec nm renv.(funs) with
+  | Some (id, AST.External f) => Some (id, f)
+  | _ => None
+  end.
+Polymorphic Definition resolve_named_external (renv: reify_funbody_env) (nm: kername): TemplateMonad (AST.ident * AST.external_function * reify_funbody_env) :=
+  match resolve_named_external' renv nm with
+  | Some (id, f) => tmEval cbv (id, f, renv)
+  | None =>
+      match List.find (fun _ => false) renv.(funs) with
+      | Some (nm', _) =>
+          tmMsg "External function name clash";;
+          tmPrint nm;;
+          tmPrint nm';;
+          tmFail "resolve_named_external"
+      | None => tmReturn tt
+      end;;
+      let new_id: AST.ident := renv.(next_id) in
+      tm <- tmUnquote (tConst nm []);;
+      sig <- tmEval cbn tm.(my_projT1);;
+      sig <- tmQuote sig;;
+      '(args, t_out) <- translate_signature sig;;
+      let new_external: AST.external_function :=
+        AST.EF_external
+          (String.to_string (snd nm))
+          (signature_of_signature (mk_signature (List.map snd args) t_out))
+      in
+      let renv: reify_funbody_env :=
+        {|
+          prog_renv :=
+            {|
+              next_id := Pos.succ renv.(next_id);
+              funs := (nm, (renv.(next_id), AST.External new_external))::renv.(funs);
+              current_module := renv.(current_module);
+            |};
+          stack := renv.(stack);
+          stack_depth := renv.(stack_depth);
+          temps := renv.(temps);
+        |}
+      in
+      tmEval cbv (new_id, new_external, renv)
+  end
+.
+
 Fixpoint resolve_rel_locali st n :=
   match st, n with
   | [], _ => None

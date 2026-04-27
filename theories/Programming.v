@@ -1,5 +1,5 @@
 From Stdlib Require Export NArith Arith.
-From GallinaC.Imp Require Export Monad Heap Store Pointer Primitives While Canonical Intops Uint32 Uintptr.
+From GallinaC.Imp Require Export Monad Heap Store Pointer Primitives While Model Intops Uint32 Uintptr.
 
 Open Scope program_scope.
 Open Scope int_scope.

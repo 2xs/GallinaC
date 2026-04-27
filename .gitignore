@@ -8,3 +8,14 @@ Makefile.rocq
 .Makefile.rocq.d
 Makefile.rocq.conf
 extraction
+*.o
+*.cmx
+*.cmi
+TODO
+reversec.depend
+reverse
+Makefile.examples.rocq
+Makefile.examples.rocq.conf
+.Makefile.examples.rocq.d
+build/
+reversec

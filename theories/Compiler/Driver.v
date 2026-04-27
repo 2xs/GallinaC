@@ -9,6 +9,42 @@ From compcert.driver Require Import Compiler.
 From GallinaC.Compiler.Deep Require Import Prog Lemmas.
 From GallinaC.Compiler.Passes Require Import IRgen Cminorgen IRgenproof Cminorgenproof.
 
+Definition transf_rtl_program (f: RTL.program) : res Asm.program :=
+   OK f
+   @@ print (print_RTL 0)
+   @@ total_if Compopts.optim_tailcalls (time "Tail calls" Tailcall.transf_program)
+   @@ print (print_RTL 1)
+  @@@ time "Inlining" Inlining.transf_program
+   @@ print (print_RTL 2)
+   @@ time "Renumbering" Renumber.transf_program
+   @@ print (print_RTL 3)
+   @@ total_if Compopts.optim_constprop (time "Constant propagation" Constprop.transf_program)
+   @@ print (print_RTL 4)
+   @@ total_if Compopts.optim_constprop (time "Renumbering" Renumber.transf_program)
+   @@ print (print_RTL 5)
+  @@@ partial_if Compopts.optim_CSE (time "CSE" CSE.transf_program)
+   @@ print (print_RTL 6)
+  @@@ partial_if Compopts.optim_redundancy (time "Redundancy elimination" Deadcode.transf_program)
+   @@ print (print_RTL 7)
+  @@@ time "Unused globals" Unusedglob.transform_program
+   @@ print (print_RTL 8)
+  @@@ time "Register allocation" Allocation.transf_program
+   @@ print print_LTL
+   @@ time "Branch tunneling" Tunneling.tunnel_program
+  @@@ time "CFG linearization" Linearize.transf_program
+   @@ time "Label cleanup" CleanupLabels.transf_program
+  @@@ partial_if Compopts.debug (time "Debugging info for local variables" Debugvar.transf_program)
+  @@@ time "Mach generation" Stacking.transf_program
+   @@ print print_Mach
+  @@@ time "Asm generation" Asmgen.transf_program.
+
+Definition transf_cminor_program (p: Cminor.program) : res Asm.program :=
+   OK p
+   @@ print print_Cminor
+  @@@ time "Instruction selection" Selection.sel_program
+  @@@ time "RTL generation" RTLgen.transl_program
+  @@@ transf_rtl_program.
+
 Definition transf_gc_program (p: program): res Asm.program :=
   Errors.OK p
     (* @@ print print_IR *)
@@ -51,10 +87,10 @@ Proof.
   unfold transf_gc_program, time in T.
   simpl in T.
   destruct (IRgen.transl_program p) as [ p1 | e ] eqn:P1; simpl in T; try discriminate.
-  destruct (Cminorgen.transl_program p1) as [ p2 | e ] eqn:P2; simpl in T; try discriminate.
+  destruct (Cminorgen.transl_program p1) as [ p4 | e ] eqn:P2; simpl in T; try discriminate.
   (** Copied from CompCert Compiler.v **)
   unfold transf_cminor_program, time in T. rewrite ! compose_print_identity in T. simpl in T.
-  destruct (Selection.sel_program p2) as [p5|e] eqn:P5; simpl in T; try discriminate.
+  destruct (Selection.sel_program p4) as [p5|e] eqn:P5; simpl in T; try discriminate.
   destruct (RTLgen.transl_program p5) as [p6|e] eqn:P6; simpl in T; try discriminate.
   unfold transf_rtl_program, time in T. rewrite ! compose_print_identity in T. simpl in T.
   set (p7 := total_if Compopts.optim_tailcalls Tailcall.transf_program p6) in *.
@@ -74,7 +110,7 @@ Proof.
   unfold match_prog; simpl.
 
   exists p1; split. apply @IRgenproof.transf_program_match; auto.
-  exists p2; split. apply Cminorgenproof.transf_program_match; auto.
+  exists p4; split. apply Cminorgenproof.transf_program_match; auto.
   exists p5; split. apply Selectionproof.transf_program_match; auto.
   exists p6; split. apply RTLgenproof.transf_program_match; auto.
   exists p7; split. apply total_if_match. apply Tailcallproof.transf_program_match.

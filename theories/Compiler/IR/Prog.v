@@ -1,4 +1,4 @@
-From Stdlib Require Import PArith ZArith.
+From Stdlib Require Import ZArith.
 
 From compcert.common Require AST.
 
@@ -8,7 +8,7 @@ From GallinaC.Compiler.IR Require Import Cmd.
 Record f_extra : Set :=
   {
     (* Stack usage in GallinaC memory words *)
-    fn_stackspace: nat;
+    fn_stackspace: Z;
   }.
 
 Definition function: Set := function cmd f_extra.

@@ -1,4 +1,6 @@
 From Stdlib Require Export NArith Psatz.
+From Stdlib Require Import ssrfun.
+Import ssrfun.Option.
 
 Local Open Scope N_scope.
 
@@ -39,4 +41,31 @@ Proof.
       rewrite <- N.Div0.add_mod_idemp_r, N.Div0.mod_same, N.add_0_r.
       apply N.mod_small.
       lia.
+Qed.
+
+Definition iter_opt [A: Type] (f: A -> option A) (n: N) (a: A): option A :=
+  N.iter n (ssrfun.Option.bind f) (Some a).
+
+Lemma iter_opt_0 [A: Type] f (a: A): iter_opt f 0 a = Some a.
+Proof.
+  reflexivity.
+Qed.
+
+Lemma iter_opt_None [A: Type] n (f: A -> option A): N.iter n (ssrfun.Option.bind f) None = None.
+Proof.
+  induction n using N.peano_ind; auto.
+  now rewrite N.iter_succ; cbn; rewrite IHn.
+Qed.
+
+Lemma iter_opt_succ [A: Type] f n (a: A): iter_opt f (N.succ n) a = match iter_opt f n a with Some a => f a | None => None end.
+Proof.
+  unfold iter_opt.
+  now rewrite N.iter_succ.
+Qed.
+
+Lemma iter_opt_succ_r [A: Type] f n (a: A): iter_opt f (N.succ n) a = match f a with Some a => iter_opt f n a | None => None end.
+Proof.
+  unfold iter_opt.
+  rewrite N.iter_succ_r; cbn; destruct (f a); auto.
+  now rewrite iter_opt_None.
 Qed.

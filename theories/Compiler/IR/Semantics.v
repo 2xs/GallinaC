@@ -363,9 +363,9 @@ Section Semantics.
     end.
 
   Definition pop_stack {St Hp} sp stackspace (s: Primitives.State St Hp) (m: Memory.mem) (inj: @injection St): option (Primitives.State St Hp * Memory.mem * @injection St) :=
-    match Mem.free m sp 0 (Z.of_nat stackspace) with
+    match Mem.free m sp 0 stackspace with
     | Some m' =>
-        match NatExt.iter_opt (fun st => Store.pop st) stackspace s.(Primitives.store) with
+        match NExt.iter_opt (fun st => Store.pop st) (Z.to_N stackspace) s.(Primitives.store) with
         | Some st' =>
             Some
               (
@@ -373,7 +373,7 @@ Section Semantics.
                 m',
                 {|
                   inj_hp_map := inj.(inj_hp_map);
-                  inj_st_map := Nat.iter stackspace (@tl _) inj.(inj_st_map);
+                  inj_st_map := N.iter (Z.to_N stackspace) (@tl _) inj.(inj_st_map);
                   inj_fn_map := inj.(inj_fn_map);
                 |}
               )
@@ -405,7 +405,7 @@ Section Semantics.
                               (DEREF: List.nth_error locals n = Some nm)
                               (MUTATE: Store.mutate s.(store) nm (memval_of_value v) = Some st')
                               (WT: wt_value v t)
-                              (STORE: (sized t /\ exists v_cc mc, Mem.store mc m sp (offset_to_offset n) v_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.inj_value inj v v_cc) \/ (~sized t /\ m' = m))
+                              (STORE: (sized t /\ exists v_cc mc, Mem.store mc m sp (offset_to_offset (Z.of_nat n)) v_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.inj_value inj v v_cc) \/ (~sized t /\ m' = m))
     , builtin
         (c_write_var n t e) genv env locals sp
         s m inj
@@ -622,8 +622,8 @@ Section Semantics.
       (Hwt_args: Forall2T wt_value args (List.map snd fn.(fn_params)))
       (Halloc_sp: Mem.alloc m 0 (offset_to_offset fn.(fn_extra).(fn_stackspace)) = (m', sp))
       (Hset_params: set_params fn.(fn_params) args = env)
-      (Hset_locals: Nat.iter
-                      fn.(fn_extra).(fn_stackspace)
+      (Hset_locals: N.iter
+                      (Z.to_N fn.(fn_extra).(fn_stackspace))
                                       (fun '(st,locals) =>
                                          let '(st,local) := Store.push st VUnit in
                                          (st, local::locals)) (s.(Primitives.store), []) = (st,locals))
@@ -634,9 +634,14 @@ Section Semantics.
         Events.E0
         (State fn fn.(fn_body) k env locals sp {| store := st; heap := s.(heap) |} m' {| inj_hp_map := inj.(inj_hp_map); inj_st_map := ListExt.mapi (fun local ofst => (local, (sp, memval_memsize * ofst, true))) locals ++ inj.(inj_st_map); inj_fn_map := inj.(inj_fn_map) |})
 
-  (* step_external_function | N/A *)
-  (* | step_external_function_False: forall ge s1 e s2, False -> step ge s1 e s2 *)
-
+  | step_external_function: forall ge nm sig args k s m inj
+                                   (ToX_out: CCInj.type_of_xtype sig.(AST.sig_res) t_unit)
+                                   (CALLK: is_call_cont k)
+    , step
+        ge
+        (Callstate (AST.External (AST.EF_external nm sig)) args k s m inj)
+        Events.E0
+        (Returnstate v_tt k s m inj)
   (* (* step_return | N/A *) *)
   (* (* return from a function into the stop continuation *) *)
   (* | step_return_call_stop: forall ge v f env sp s m inj, *)

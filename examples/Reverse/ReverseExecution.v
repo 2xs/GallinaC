@@ -1,6 +1,7 @@
 From GallinaC Require Import Programming.
 
 From GallinaC.Examples.Reverse Require Import Reverse.
+Import Reverse.
 Import List ListNotations.
 
 Definition init_state: Primitives.State ListStore list_heap_heap := Primitives.mkState Store.emp (Heap.emp_with_alc (mkOptAlloc (Some 0%nat))).
@@ -29,7 +30,7 @@ Definition post_reverse_state: Primitives.State ListStore list_heap_heap :=
 
 (* Programs without while can be reduced using the classical tactics without issue *)
 Example prelude_execution:
-  prelude init_state = Some (Success (Some (Addr.mkAddr 2 0, Provenance.Allocation 2 0 2 0 2 Permission.Free), post_prelude_state)).
+  allocate init_state = Some (Success (Some (Addr.mkAddr 2 0, Provenance.Allocation 2 0 2 0 2 Permission.Free), post_prelude_state)).
 Proof.
   reflexivity.
 Qed.
@@ -59,7 +60,7 @@ Ltac reduce := match goal with
 Example reverse_execution:
   main init_state = Some (Success (0, post_reverse_state)).
 Proof.
-  cbv delta [main prelude reverse postlude].
+  cbv delta [main print_ll allocate reverse].
   repeat reduce.
   (* We are stuck at a while, unroll the loop once, the continue evaluation *)
   rewrite while_fixpoint; repeat reduce.

@@ -125,7 +125,7 @@ Section Rewriting.
   Qed.
 
   Lemma xtype_of_type_inversion {A: Type} {t: Types.type} {a a_void a_other: A}:
-    match CCInj.xtype_of_type t with
+    match CCInj.type_to_xtype t with
     | None (* void *) => a_void
     | _ => a_other
     end = a ->
@@ -311,7 +311,7 @@ Section WT.
   Lemma inj_has_argtype {St inj v tv t tt}
     (WT: wt_value v t)
     (INJ: @CCInj.inj_value St inj v tv)
-    (XT: xtype_of_type t = Some tt)
+    (XT: type_to_xtype t = Some tt)
     : Values.Val.has_argtype tv tt.
   Proof.
     induction WT;
@@ -323,12 +323,12 @@ Section WT.
         destruct Heq as (i & Hunsigned & Heq);
         subst;
         unfold Values.Val.has_argtype;
-        unfold xtype_of_type;
+        unfold type_to_xtype;
         unfold AST.Xsize_t;
         now rewrite Earchi.
   Qed.
 
-  Lemma xtype_of_type_sized t (Hsized: Types.sized t): exists xt, xtype_of_type t = Some xt.
+  Lemma xtype_of_type_sized t (Hsized: Types.sized t): exists xt, type_to_xtype t = Some xt.
     destruct Hsized; now eexists.
   Qed.
 
@@ -447,9 +447,9 @@ Section Free.
 
   Lemma sp_free_success_State {St Hp fn c k env locals sp s m inj ctx t}
     (WT: @Semantics.wt_State St Hp fn c k env locals sp s m inj ctx t)
-    : exists m', Memory.Mem.free m sp 0%Z (Z.of_nat fn.(fn_extra).(fn_stackspace)) = Some m'.
+    : exists m', Memory.Mem.free m sp 0%Z fn.(fn_extra).(fn_stackspace) = Some m'.
   Proof.
-    destruct (Memory.Mem.range_perm_free m sp 0 (Z.of_nat fn.(fn_extra).(fn_stackspace))) as (m' & Heq); [ | now exists m' ].
+    destruct (Memory.Mem.range_perm_free m sp 0 fn.(fn_extra).(fn_stackspace)) as (m' & Heq); [ | now exists m' ].
 
     destruct fn as [ fn_return fn_params fn_temps fn_body [ fn_stackspace ] ].
     revert fn_stackspace WT.
@@ -529,7 +529,7 @@ Section Free.
 
   Lemma sp_free_success {St Hp prog f c k env locals sp s m inj}
     (WT: @Semantics.wt_state St Hp prog (Semantics.State f c k env locals sp s m inj))
-    : exists m', Memory.Mem.free m sp 0%Z (Z.of_nat f.(fn_extra).(fn_stackspace)) = Some m'.
+    : exists m', Memory.Mem.free m sp 0%Z f.(fn_extra).(fn_stackspace) = Some m'.
   Proof.
     inversion WT; subst.
     eapply sp_free_success_State; now eauto.

@@ -169,12 +169,12 @@ Fixpoint type_expr (env: map_ctxt (type * bool)) (e: expr): option type :=
   | e_tt => Some t_unit
   | e_bool _ => Some t_bool
   | e_nat n =>
-      if Nat.leb n Unsigned.max_unsigned then
+      if Z.leb (Z.of_nat n) (Unsigned.max_unsigned nat_uint32_t) then
         Some t_nat
       else
         None
   | e_ofst o =>
-      if N.leb o Unsigned.max_unsigned then
+      if Z.leb (Z.of_N o) (Unsigned.max_unsigned n_ofst_t) then
         Some t_ofst
       else
         None
@@ -237,11 +237,13 @@ Module Facts.
       + now inversion WT; subst;
           inversion Hground; subst;
           rewrite Hget_env.
-      + inversion WT as [ | | |?n [_ LE]| | | | | ]; subst;
-          rewrite Uint32.Facts.LE in LE;
-          destruct (Nat.leb_spec n Unsigned.max_unsigned); [ easy | lia ].
+      + inversion WT as [ | | |?n [_ LE]| | | | | ]; subst.
+        destruct (Z.leb_spec (Z.of_nat n) (Unsigned.max_unsigned nat_uint32_t)); [ easy | ].
+        assert ((Z.of_nat n <= Unsigned.max_unsigned nat_uint32_t)%Z) by apply LE.
+        lia.
       + inversion WT as [ | | | | ?o [_ LE]| | | | ]; subst.
-        destruct (N.leb_spec ofst Unsigned.max_unsigned); [ easy | assert ((ofst <= Unsigned.max_unsigned)%N) by apply LE; lia ].
+        destruct (Z.leb_spec (Z.of_N ofst) (Unsigned.max_unsigned n_ofst_t)); [ easy | ].
+        assert ((Z.of_N ofst <= Unsigned.max_unsigned n_ofst_t)%Z) by apply LE; lia.
       + now inversion WT; subst; rewrite (IHe _ Hwt_expr_b).
       + now inversion WT; subst;
           rewrite (IHe1 _ Hwt_expr_l), (IHe2 _ Hwt_expr_r).
@@ -253,12 +255,16 @@ Module Facts.
       + constructor;
           destruct (env ! i) as [[[] []] | ] eqn:Eget;
           try congruence; inversion EQ; subst; constructor.
-      + destruct (Nat.leb_spec n Unsigned.max_unsigned); inversion EQ; subst; clear EQ.
+      + destruct (Z.leb_spec (Z.of_nat n) (Unsigned.max_unsigned nat_uint32_t)); inversion EQ; subst; clear EQ.
         constructor.
-        constructor; [ apply Nat.le_0_l | apply H ].
-      + destruct (N.leb_spec ofst Unsigned.max_unsigned); inversion EQ; subst; clear EQ.
+        constructor; [ | apply H ].
+        change (Unsigned.min_unsigned nat_uint32_t) with (Z.of_nat 0).
+        apply Nat2Z.inj_le; lia.
+      + destruct (Z.leb_spec (Z.of_N ofst) (Unsigned.max_unsigned n_ofst_t)); inversion EQ; subst; clear EQ.
         constructor.
-        constructor; [ apply N.le_0_l | apply H].
+        constructor; [ | apply H].
+        change (Unsigned.min_unsigned n_ofst_t) with (Z.of_N 0).
+        apply N2Z.inj_le; lia.
       + destruct (type_expr env e) as [[]|]; try discriminate.
         inversion EQ; subst.
         constructor.

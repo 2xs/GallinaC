@@ -14,8 +14,12 @@ From compcert.lib Require Import Integers.
 
 Local Open Scope error_monad_scope.
 
-Local Notation "'do' 'assertion' A ; B" := (if A then B else assertion_failed)
-                                             (at level 200, A at level 100, B at level 200)
+(* Local Notation "'do' 'assertion' A ; B" := (if A then B else assertion_failed) *)
+(*                                              (at level 200, A at level 100, B at level 200) *)
+(*     : error_monad_scope. *)
+
+Local Notation "'do' 'assert' A 'with' fail_msg ; B" := (if A then B else Error (msg fail_msg))
+                                                          (at level 200, A at level 100, B at level 200)
     : error_monad_scope.
 
 (* Return in IR and in Cminor are very different.
@@ -54,10 +58,6 @@ Definition make_size_t (n: N.t): Cminor.expr :=
   else
     Cminor.Econst (Cminor.Ointconst (Int.repr (Z.of_N n))).
 
-(* Since C integers are "signed-flexible", we cast to long and hope everything works out ... *)
-Definition cast_long (e: Cminor.expr): Cminor.expr :=
-  Cminor.Eunop Cminor.Olongofintu e.
-
 (* Since we don't have booleans anymore, we instead compare that the boolean is equal to "false" *)
 Definition make_bool_not (e: Cminor.expr): Cminor.expr :=
   Cminor.Ebinop (Cminor.Ocmpu Ceq) e (make_bool false).
@@ -71,29 +71,46 @@ Definition make_nat_eq (l r: Cminor.expr): Cminor.expr :=
 Definition make_nat_lt (l r: Cminor.expr): Cminor.expr :=
   Cminor.Ebinop (Cminor.Ocmpu Clt) l r.
 
-Definition cast_size_t (e: Cminor.expr): Cminor.expr :=
-  if Archi.ptr64 then
-    cast_long e
-  else
-    e.
+Definition make_ofst_lt (l r: Cminor.expr): Cminor.expr :=
+  Cminor.Ebinop (Cminor.Ocmplu Clt) l r.
 
-Definition ptr_shift_fw_op: Cminor.binary_operation :=
+Definition ofst_add_op: Cminor.binary_operation :=
   if Archi.ptr64 then
     Cminor.Oaddl
   else
     Cminor.Oadd.
 
-Definition ptr_shift_bw_op: Cminor.binary_operation :=
+Definition ofst_sub_op: Cminor.binary_operation :=
   if Archi.ptr64 then
     Cminor.Osubl
   else
     Cminor.Osub.
 
+Definition make_ofst_add (l r: Cminor.expr): Cminor.expr :=
+  Cminor.Ebinop ofst_add_op l r.
+
+(* GallinaC counts offsets in "memory words" *)
+(* Compilation preserves values at this size *)
+(* Before each operation, we adjust them to be the correct value *)
+Definition adjust_offset (n: Cminor.expr): Cminor.expr :=
+  if Archi.ptr64 then
+    Cminor.Ebinop Cminor.Omull n (make_size_t (N.of_nat memval_memsize))
+  else
+    Cminor.Ebinop Cminor.Omul n (make_size_t (N.of_nat memval_memsize)).
+
+Definition make_array_ofst := adjust_offset.
+
+Definition make_size_from_count := adjust_offset.
+
+Definition ptr_shift_fw_op: Cminor.binary_operation := ofst_add_op.
+
+Definition ptr_shift_bw_op: Cminor.binary_operation := ofst_sub_op.
+
 Definition make_ptr_shift_fw (p n: Cminor.expr): Cminor.expr :=
-  Cminor.Ebinop ptr_shift_fw_op p (cast_size_t n).
+  Cminor.Ebinop ptr_shift_fw_op p (adjust_offset n).
 
 Definition make_ptr_shift_bw (p n: Cminor.expr): Cminor.expr :=
-  Cminor.Ebinop ptr_shift_bw_op p (cast_size_t n).
+  Cminor.Ebinop ptr_shift_bw_op p (adjust_offset n).
 
 Definition make_ptr_eq (p1 p2: Cminor.expr): Cminor.expr :=
   if Archi.ptr64 then
@@ -101,14 +118,6 @@ Definition make_ptr_eq (p1 p2: Cminor.expr): Cminor.expr :=
   else
     Cminor.Ebinop (Cminor.Ocmpu Ceq) p1 p2.
 
-Definition make_array_ofst (n: Cminor.expr): Cminor.expr :=
-  if Archi.ptr64 then
-    (* Again, n /should/ be an int, we do the cast at the last moment *)
-    Cminor.Ebinop Cminor.Omull (cast_long n) (cast_long (make_int memval_memsize))
-  else
-    Cminor.Ebinop Cminor.Omul n (make_int memval_memsize).
-
-Definition make_size_from_count := make_array_ofst.
 
 (* Translates an expression *)
 (* Assumes the expression is well-typed *)
@@ -126,7 +135,7 @@ Fixpoint transl_expr_maybe_sized cenv e t {struct e}: res (option (Cminor.expr *
             end
           else
             Error [ MSG "Identifier type mismatch" ]
-      | None => Error [ MSG "Unbound identifier" ]
+      | None => Error [ MSG "Unbound identifier"; POS id ]
       end
   | e_tt, t_unit => OK None
   | e_bool b, t_bool => OK (Some (make_bool b, AST.Mbool))
@@ -231,15 +240,6 @@ Definition stack_ptr (ofst: nat): Cminor.expr :=
 Definition global_ptr (id: AST.ident): Cminor.expr :=
   Cminor.Econst (Cminor.Oaddrsymbol id Ptrofs.zero).
 
-Definition make_signature (t_args: list type) (t_res: type): AST.signature :=
-  AST.mksignature
-    (* sig_args *)
-    (ListExt.filter_map CCInj.xtype_of_type t_args)
-    (* sig_res *)
-    (Option.default (AST.Xvoid) (CCInj.xtype_of_type t_res))
-    AST.cc_default
-.
-
 Definition make_call target f args sig: Cminor.stmt :=
   match target with
   | None => Cminor.Stailcall sig (global_ptr f) args
@@ -253,16 +253,16 @@ Definition make_call target f args sig: Cminor.stmt :=
         args
   end.
 
-Definition make_for (i: AST.ident) (start: Cminor.expr) (step: Cminor.expr) (stop: Cminor.expr) (body: Cminor.expr -> Cminor.stmt): Cminor.stmt :=
+Definition make_for_ofst (i: AST.ident) (start: Cminor.expr) (step: Cminor.expr) (stop: Cminor.expr) (body: Cminor.expr -> Cminor.stmt): Cminor.stmt :=
   Cminor.Sblock
     (Cminor.Sseq
        (Cminor.Sassign i start)
        (Cminor.Sloop
           (Cminor.Sifthenelse
-             (make_nat_lt (Cminor.Evar i) stop)
+             (make_ofst_lt (Cminor.Evar i) stop)
              (Cminor.Sseq
                 (body (Cminor.Evar i))
-                (Cminor.Sassign i (make_nat_add (Cminor.Evar i) step)))
+                (Cminor.Sassign i (make_ofst_add (Cminor.Evar i) step)))
              (Cminor.Sexit 0))))
 .
 
@@ -276,7 +276,7 @@ Fixpoint transl_cmd (cenv: compilenv) (target: option AST.ident) (c: cmd) {struc
       OK (Cminor.Sseq c_b' c_c')
   | c_if e_if c_then c_else t_te =>
       do (e_if', mc_if) <- transl_expr_sized cenv e_if t_bool;
-      do assertion (AST.chunk_eq mc_if AST.Mbool);
+      do assert (AST.chunk_eq mc_if AST.Mbool) with "If condition is not a bool";
       do c_then' <- transl_cmd cenv target c_then;
       do c_else' <- transl_cmd cenv target c_else;
       OK (Cminor.Sifthenelse e_if' c_then' c_else')
@@ -306,8 +306,8 @@ Fixpoint transl_cmd (cenv: compilenv) (target: option AST.ident) (c: cmd) {struc
   | c_alloc_ptr e_count t e_init id_ptr id_init =>
       match cenv.(id_malloc) with
       | Some id_malloc =>
-          do (e_count', mc_count) <- transl_expr_sized cenv e_count t_nat;
-          do assertion (AST.chunk_eq mc_count AST.Mptr);
+          do (e_count', mc_count) <- transl_expr_sized cenv e_count t_ofst;
+          do assert (AST.chunk_eq mc_count AST.Mptr) with "Chunk of allocation size is not AST.Mptr";
           let e_size' := make_size_from_count e_count' in
           do emc_init' <- transl_expr_maybe_sized cenv e_init t;
           OK
@@ -320,11 +320,12 @@ Fixpoint transl_cmd (cenv: compilenv) (target: option AST.ident) (c: cmd) {struc
                        (* Alloc *)
                        (make_call (Some id_ptr) id_malloc [ e_size' ] (AST.ef_sig AST.EF_malloc))
                        (* Initialize *)
-                       (make_for id_init (make_int 0) (make_int 1) e_count'
+                       (make_for_ofst id_init (make_size_t 0) (make_size_t 1) e_count'
                           (fun id => store_ptr_stmt
+                                       (* offset adjustemnt done by make_ptr_shift_fw *)
                                        (make_ptr_shift_fw
                                           (Cminor.Evar id_ptr)
-                                          (make_array_ofst id))
+                                          id)
                                        emc_init')))
                     (return_or_assign_sized target (Cminor.Evar id_ptr))
                )
@@ -343,7 +344,7 @@ Fixpoint transl_cmd (cenv: compilenv) (target: option AST.ident) (c: cmd) {struc
       match cenv.(id_free) with
       | Some id_free =>
           do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-          do assertion (AST.chunk_eq mc_ptr AST.Mptr);
+          do assert (AST.chunk_eq mc_ptr AST.Mptr) with "free pointer is not a pointer";
           OK
             (make_call target id_free [ e_ptr' ] (AST.ef_sig AST.EF_free))
       | None =>
@@ -351,28 +352,28 @@ Fixpoint transl_cmd (cenv: compilenv) (target: option AST.ident) (c: cmd) {struc
       end
   | c_shift_fw_ptr e_ptr e_shift =>
       do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-      do assertion (AST.chunk_eq mc_ptr AST.Mptr);
-      do (e_shift', mc_shift) <- transl_expr_sized cenv e_shift t_nat;
-      do assertion (AST.chunk_eq mc_shift AST.Mint32);
+      do assert (AST.chunk_eq mc_ptr AST.Mptr) with "shift_fw pointer is not a pointer";
+      do (e_shift', mc_shift) <- transl_expr_sized cenv e_shift t_ofst;
+      do assert (AST.chunk_eq mc_shift AST.Mptr) with "shift_fw offset is not an offset";
       OK (return_or_assign_sized target (make_ptr_shift_fw e_ptr' e_shift'))
   | c_shift_bw_ptr e_ptr e_shift =>
       do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-      do assertion (AST.chunk_eq mc_ptr AST.Mptr);
-      do (e_shift', mc_shift) <- transl_expr_sized cenv e_shift t_nat;
-      do assertion (AST.chunk_eq mc_shift AST.Mint32);
+      do assert (AST.chunk_eq mc_ptr AST.Mptr) with "shift_bw pointer is not a pointer";
+      do (e_shift', mc_shift) <- transl_expr_sized cenv e_shift t_ofst;
+      do assert (AST.chunk_eq mc_shift AST.Mint32) with "shift_bw offset is not an offset";
       OK (return_or_assign_sized target (make_ptr_shift_fw e_ptr' e_shift'))
   | c_ptr_eq e_ptr_l e_ptr_r =>
       do (e_ptr_l', mc_ptr_l) <- transl_expr_sized cenv e_ptr_l t_ptr;
-      do assertion (AST.chunk_eq mc_ptr_l AST.Mptr);
+      do assert (AST.chunk_eq mc_ptr_l AST.Mptr) with "ptr_eq left pointer is not a pointer";
       do (e_ptr_r', mc_ptr_r) <- transl_expr_sized cenv e_ptr_r t_ptr;
-      do assertion (AST.chunk_eq mc_ptr_r AST.Mptr);
+      do assert (AST.chunk_eq mc_ptr_r AST.Mptr) with "ptr_eq right pointer is not a pointer";
       OK (return_or_assign_sized target (make_ptr_eq e_ptr_l' e_ptr_r'))
   | c_app f t_out args =>
-      let sig := make_signature (List.map snd args) t_out in
+      let sig := mk_signature (List.map snd args) t_out in
       do args' <- Errors.mmap (uncurry (transl_expr_maybe_sized cenv)) args;
       let args' := ListExt.filter_map id args' in
       let args' := List.map fst args' in
-      OK (make_call target f args' (make_signature (List.map snd args) t_out))
+      OK (make_call target f args' (mk_signature (List.map snd args) t_out))
   end.
 
 Definition params_of_function (f: function): list AST.ident :=
@@ -382,7 +383,7 @@ Definition vars_of_function (f: function): list AST.ident :=
   List.map fst f.(fn_temps).
 
 Definition transl_funbody id_malloc id_free (f: function): res Cminor.function :=
-  do tbody <- transl_cmd (mkcompilenv f.(fn_temps) id_malloc id_free) None f.(fn_body);
+  do tbody <- transl_cmd (mkcompilenv (f.(fn_params)++f.(fn_temps)) id_malloc id_free) None f.(fn_body);
   OK (Cminor.mkfunction
         (* fn_sig *)
         (Prog.signature_of_signature (Prog.fn_signature f))

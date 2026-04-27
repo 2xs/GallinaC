@@ -1,4 +1,4 @@
-From Stdlib Require Import PArith NArith Arith.
+From Stdlib Require Import PArith NArith ZArith Arith.
 
 From compcert.lib Require Import Maps.
 
@@ -62,7 +62,7 @@ Inductive wt_cmd: ctxt (type * bool) Empty_set fundef vardef -> cmd -> type -> P
     wt_cmd ty_ctxt (c_app f_id fn.(fn_return) args) fn.(fn_return)
 .
 
-Definition wt_f_extra (f_extra: f_extra): Prop := f_extra.(fn_stackspace) <= Unsigned.max_unsigned.
+Definition wt_f_extra (f_extra: f_extra): Prop := (f_extra.(fn_stackspace) <= Unsigned.max_unsigned n_ofst_t)%Z.
 
 Record wt_p_extra (p: program): Prop :=
   {

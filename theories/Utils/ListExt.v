@@ -30,7 +30,14 @@ Fixpoint replace_insert {A B: Type} {eq_dec: forall x y, {x = y} + {x <> y}} (k:
   | (x, y)::l => if eq_dec x k then (x, v)::l else ((x,y)::(@replace_insert A B eq_dec k v l))
   end.
 
-Fixpoint remove_bind {A B: Type} {eqA: A -> A -> Prop} {eqA_dec: forall x y, {eqA x y} + {~eqA x y}} (k: A) (l: list (A*B)): list (A*B) :=
+Fixpoint replace_nth [A: Type] (n: nat) (a: A) (l: list A) {struct n}: list A :=
+  match n, l with
+  | 0, _::l => a::l
+  | S n, x::l => x::(replace_nth n a l)
+  | _, [] => []
+  end.
+
+Fixpoint remove_bind {A B: Type} {eqA: A -> A -> Prop} (eqA_dec: forall x y, {eqA x y} + {~eqA x y}) (k: A) (l: list (A*B)): list (A*B) :=
   match l with
   | [] => []
   | (x,y)::l =>
@@ -438,7 +445,10 @@ Fixpoint forall2 {A B: Type} (f: A -> B -> bool) (l: list A) (l': list B): bool 
   match l, l' with
   | [], [] => true
   | x::xs, y::ys =>
-      ((f x y) && forall2 f xs ys)%bool
+      if f x y then
+        forall2 f xs ys
+      else
+        false
   | _,_ => false
   end.
 

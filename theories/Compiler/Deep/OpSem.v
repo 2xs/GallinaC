@@ -21,34 +21,34 @@ Section State.
   | Kstop: cont
   (* 2. To bind the result in a temporary variable *)
   | Kbind:
-    forall (id_b: AST.ident)     (* identifier to bind *)
-           (c: cmd)              (* command to execute next *)
-           (k: cont)             (* then continue with k *)
+    forall (id_b: AST.ident)            (* identifier to bind *)
+           (c: cmd)                     (* command to execute next *)
+           (k: cont)                    (* then continue with k *)
     , cont
   (* 3. To evaluate the condition of a while loop *)
   | Kloop1:
-    forall (c_cond: cmd)         (* command of the condition *)
-           (c_body: cmd)         (* command of the body *)
-           (k: cont)             (* when the loop terminates, continue with k *)
+    forall (c_cond: cmd)                (* command of the condition *)
+           (c_body: cmd)                (* command of the body *)
+           (k: cont)                    (* when the loop terminates, continue with k *)
     , cont
   (* 4. To evaluate the body of a while loop *)
   | Kloop2:
-    forall (c_cond: cmd)         (* command of the condition *)
-           (c_body: cmd)         (* command of the body *)
-           (k: cont)             (* when the loop terminates, continue with k *)
+    forall (c_cond: cmd)                (* command of the condition *)
+           (c_body: cmd)                (* command of the body *)
+           (k: cont)                    (* when the loop terminates, continue with k *)
     , cont
   (* 5. To return from a sub-function call *)
   | Kcall:
-    forall (fn: function)        (* calling function f *)
-           (e: map_ctxt value)   (* execution environment of f *)
-           (sp: list (@name St)) (* live local variables of f *)
-           (k: cont)             (* then continue with k *)
+    forall (fn: function)               (* calling function f *)
+           (e: map_ctxt value)          (* execution environment of f *)
+           (locals: list (@name St))    (* live local variables of f *)
+           (k: cont)                    (* then continue with k *)
     , cont
   .
 
   Inductive is_call_cont: cont -> Prop :=
   | call_cont_Kstop: is_call_cont Kstop
-  | call_cont_Kcall: forall fn e sp k, is_call_cont (Kcall fn e sp k)
+  | call_cont_Kcall: forall fn e locals k, is_call_cont (Kcall fn e locals k)
   .
 
   Inductive is_seq_cont: cont -> Prop :=
@@ -76,33 +76,33 @@ Section State.
         (if b then Kloop2 c_cond c_body k else k)
   | resolve_seq_Kloop2: forall c_cond c_body k env,
       resolve_seq_cont
-        (Kloop1 c_cond c_body k)
+        (Kloop2 c_cond c_body k)
         env
         v_tt
         c_cond
         env
-        (Kloop2 c_cond c_body k)
+        (Kloop1 c_cond c_body k)
   .
 
   Inductive state: Type :=
-  | State:                       (* Execution within a function         *)
-    forall (fn: function)        (* currently executing function        *)
-           (c: cmd)              (* command under consideration         *)
-           (k: cont)             (* its continuation -- what to do next *)
-           (e: map_ctxt value)   (* current loval environment           *)
-           (sp: list (@name St)) (* live local variables                *)
-           (s: State St Hp)      (* current heap and store states       *)
+  | State:                              (* Execution within a function         *)
+    forall (fn: function)               (* currently executing function        *)
+           (c: cmd)                     (* command under consideration         *)
+           (k: cont)                    (* its continuation -- what to do next *)
+           (e: map_ctxt value)          (* current loval environment           *)
+           (locals: list (@name St))    (* live local variables                *)
+           (s: State St Hp)             (* current heap and store states       *)
     , state
-  | Callstate:                   (* Invocation of a function *)
-    forall (f: fundef)           (* function to invoke       *)
-           (arg: list value)     (* arguments provided by the caller *)
-           (k: cont)             (* what to do next *)
-           (s: State St Hp)      (* current heap and store states *)
+  | Callstate:                          (* Invocation of a function *)
+    forall (f: fundef)                  (* function to invoke       *)
+           (arg: list value)            (* arguments provided by the caller *)
+           (k: cont)                    (* what to do next *)
+           (s: State St Hp)             (* current heap and store states *)
     , state
-  | Returnstate:                 (* Return from a function *)
-    forall (v: value)            (* Return value *)
-           (k: cont)             (* what to do next *)
-           (s: State St Hp)      (* current heap and store states *)
+  | Returnstate:                        (* Return from a function *)
+    forall (v: value)                   (* Return value *)
+           (k: cont)                    (* what to do next *)
+           (s: State St Hp)             (* current heap and store states *)
     , state
   .
 
@@ -162,174 +162,184 @@ Section State.
     | _, _ => Maps.PTree.empty _
     end.
 
+  Definition pop_stack {St Hp} locals (s: Primitives.State St Hp): option (Primitives.State St Hp) :=
+    match ListExt.fold_left_opt (B := @name St) (fun st _ => Store.pop st) locals s.(Primitives.store) with
+    | Some st' => Some (Primitives.mkState st' s.(Primitives.heap))
+    | None => None
+    end
+  .
+
   (* "Primitive" operations *)
   Inductive builtin: cmd -> genv -> map_ctxt value -> list (@name St) -> Primitives.State St Hp -> value -> Primitives.State St Hp -> Prop :=
-  | builtin_ret: forall e genv env sp s v
-                       (EVAL: eval e env = Some v)
+  | builtin_ret: forall e genv env locals s v
+                        (EVAL: eval e env = Some v)
     , builtin
-        (c_ret e) genv env sp s v s
+        (c_ret e) genv env locals s v s
 
-  | builtin_read_var: forall n t genv env sp s v nm
-                             (DEREF: List.nth_error sp n = Some nm)
-                             (LOOKUP: Store.lookup s.(store) nm = Some (memval_of_value v))
+  | builtin_read_var: forall n t genv env locals s v mv nm
+                             (DEREF: List.nth_error locals n = Some nm)
+                             (LOOKUP: Store.lookup s.(store) nm = Some mv)
+                             (VMV: value_memval v mv)
     , builtin
-        (c_read_var n t) genv env sp
+        (c_read_var n t) genv env locals
         s
         v
         s
-  | builtin_write_var: forall n t e genv env sp s st' v nm
+  | builtin_write_var: forall n t e genv env locals s st' v nm
                               (EVAL: eval e env = Some v)
-                              (DEREF: List.nth_error sp n = Some nm)
+                              (DEREF: List.nth_error locals n = Some nm)
                               (MUTATE: Store.mutate s.(store) nm (memval_of_value v) = Some st')
                               (WT: wt_value v t)
     , builtin
-        (c_write_var n t e) genv env sp
+        (c_write_var n t e) genv env locals
         s
         v_tt
         {| store := st'; heap := s.(heap); |}
 
-  | builtin_alloc_ptr: forall e_size t e_init genv env sp s ptr hp' v_size v_init
+  | builtin_alloc_ptr: forall e_size t e_init genv env locals s ptr hp' v_size v_init
                               (EVAL_SIZE: eval e_size env = Some (v_ofst v_size))
                               (EVAL_INIT: eval e_init env = Some v_init)
                               (WT: wt_value v_init t)
                               (ALLOC: Heap.alloc s.(heap) v_size (memval_of_value v_init) = Some (hp', ptr))
     , builtin
-        (c_alloc_ptr e_size t e_init) genv env sp
+        (c_alloc_ptr e_size t e_init) genv env locals
         s
         (v_ptr ptr)
         {| store := s.(store); heap := hp'; |}
-  | builtin_read_ptr: forall e_ptr t genv env sp s v_read v_ptr
+  | builtin_read_ptr: forall e_ptr t genv env locals s v_read v_ptr mv
                              (EVAL: eval e_ptr env = Some (Value.v_ptr v_ptr))
-                             (LOOKUP: Heap.lookup s.(heap) v_ptr = Some (memval_of_value v_read))
+                             (LOOKUP: Heap.lookup s.(heap) v_ptr = Some mv)
                              (WT: wt_value v_read t)
+                             (VMV: value_memval v_read mv)
     , builtin
-        (c_read_ptr e_ptr t) genv env sp
+        (c_read_ptr e_ptr t) genv env locals
         s
         v_read
         s
-  | builtin_write_ptr: forall e_ptr t e_data genv env sp s hp' v_ptr v_data
+  | builtin_write_ptr: forall e_ptr t e_data genv env locals s hp' v_ptr v_data
                               (EVAL_ptr: eval e_ptr env = Some (Value.v_ptr v_ptr))
                               (EVAL_data: eval e_data env = Some v_data)
                               (MUTATE: Heap.mutate s.(heap) v_ptr (memval_of_value v_data) = Some hp')
                               (WT: wt_value v_data t)
 
     , builtin
-        (c_write_ptr e_ptr t e_data) genv env sp
+        (c_write_ptr e_ptr t e_data) genv env locals
         s
         v_tt
         {| store := s.(store); heap := hp' |}
-  | builtin_free_ptr: forall e_ptr genv env sp s hp' v_ptr
+  | builtin_free_ptr: forall e_ptr genv env locals s hp' v_ptr
                              (EVAL: eval e_ptr env = Some (Value.v_ptr v_ptr))
                              (FREE: Heap.free s.(heap) v_ptr = Some hp')
     , builtin
-        (c_free_ptr e_ptr) genv env sp
+        (c_free_ptr e_ptr) genv env locals
         s
         v_tt
         {| store := s.(store); heap := hp' |}
 
-  | builtin_shift_fw_ptr: forall e_ptr e_shift genv env sp s v_ptr' v_ptr v_shift
+  | builtin_shift_fw_ptr: forall e_ptr e_shift genv env locals s v_ptr' v_ptr v_shift
                                  (EVAL_ptr: eval e_ptr env = Some (Value.v_ptr v_ptr))
                                  (EVAL_shift: eval e_shift env = Some (v_ofst v_shift))
                                  (SHIFT: Pointer.Shift v_ptr v_shift v_ptr')
                                  (WVALID_pre: Heap.Facts.WValid s.(heap) v_ptr)
                                  (WVALID_post: Heap.Facts.WValid s.(heap) v_ptr')
     , builtin
-        (c_shift_fw_ptr e_ptr e_shift) genv env sp
+        (c_shift_fw_ptr e_ptr e_shift) genv env locals
         s
         (Value.v_ptr v_ptr')
         s
-  | builtin_shift_bw_ptr: forall e_ptr e_shift genv env sp s v_ptr' v_ptr v_shift
+  | builtin_shift_bw_ptr: forall e_ptr e_shift genv env locals s v_ptr' v_ptr v_shift
                                  (EVAL_ptr: eval e_ptr env = Some (Value.v_ptr v_ptr))
                                  (EVAL_shift: eval e_shift env = Some (v_ofst v_shift))
                                  (SHIFT: Pointer.Shift v_ptr' v_shift v_ptr)
                                  (WVALID_pre: Heap.Facts.WValid s.(heap) v_ptr)
                                  (WVALID_post: Heap.Facts.WValid s.(heap) v_ptr')
     , builtin
-        (c_shift_bw_ptr e_ptr e_shift) genv env sp
+        (c_shift_bw_ptr e_ptr e_shift) genv env locals
         s
         (Value.v_ptr v_ptr')
         s
-  | builtin_eq_ptr: forall e_ptr_l e_ptr_r genv env sp s b v_ptr_l v_ptr_r
+  | builtin_eq_ptr: forall e_ptr_l e_ptr_r genv env locals s b v_ptr_l v_ptr_r
                            (EVAL_l: eval e_ptr_l env = Some (v_ptr v_ptr_l))
                            (EVAL_r: eval e_ptr_r env = Some (v_ptr v_ptr_r))
                            (WVALID_l: Heap.Facts.WValid s.(heap) v_ptr_l)
                            (WVALID_r: Heap.Facts.WValid s.(heap) v_ptr_r)
                            (CMP: Pointer.cmp v_ptr_l v_ptr_r = Some b)
     , builtin
-        (c_ptr_eq e_ptr_l e_ptr_r) genv env sp
+        (c_ptr_eq e_ptr_l e_ptr_r) genv env locals
         s
         (v_bool b)
         s
   .
 
   Inductive step: genv -> state -> Events.trace -> state -> Prop :=
-  | step_bind: forall ge f id_b t_b c_b c_c k env sp s,
+  | step_bind: forall ge f id_b t_b c_b c_c k env locals s,
       step
         ge
-        (State f (c_bind id_b t_b c_b c_c) k env sp s)
+        (State f (c_bind id_b t_b c_b c_c) k env locals s)
         Events.E0
-        (State f c_b (Kbind id_b c_c k) env sp s)
-  | step_with_var: forall ge f t e_init c_next k env sp s v st' nm
+        (State f c_b (Kbind id_b c_c k) env locals s)
+  | step_with_var: forall ge f t e_init c_next k env locals s v st' nm
                           (EVAL: eval e_init env = Some v)
                           (PUSH: Store.push s.(store) (memval_of_value v) = (st', nm))
     , step
         ge
-        (State f (c_with_var t e_init c_next) k env sp s)
+        (State f (c_with_var t e_init c_next) k env locals s)
         Events.E0
-        (State f c_next k env (sp++[nm]) {| store := st'; heap := s.(heap) |})
+        (State f c_next k env (locals++[nm]) {| store := st'; heap := s.(heap) |})
 
-  | step_builtin_call_cont: forall ge f c k env sp s v s'
+  | step_builtin_call_cont: forall ge f c k env locals s v s' s''
                                    (CALLK: is_call_cont k)
-                                   (BUILTIN: builtin c ge env sp s v s')
+                                   (BUILTIN: builtin c ge env locals s v s')
+                                   (POP_STACK: pop_stack locals s = Some s'')
     , step
         ge
-        (State f c k env sp s)
+        (State f c k env locals s)
         Events.E0
-        (Returnstate v k s')
-  | step_builtin_seq_cont: forall ge f c k env sp s c_next k' env' s' v
+        (Returnstate v k s'')
+  | step_builtin_seq_cont: forall ge f c k env locals s c_next k' env' s' v
                                   (RESOLVE: resolve_seq_cont k env v c_next env' k')
-                                  (BUILTIN: builtin c ge env sp s v s')
+                                  (BUILTIN: builtin c ge env locals s v s')
     , step
         ge
-        (State f c k env sp s)
+        (State f c k env locals s)
         Events.E0
-        (State f c_next k' env' sp s')
+        (State f c_next k' env' locals s')
 
-  | step_app: forall ge f id_f args k env sp s fd v_args b
+  | step_app: forall ge f id_f args k env locals s fd v_args b
                      (EVAL: map_opt (fun e => eval e env) args = Some v_args)
                      (FIND_SYMB: Globalenvs.Genv.find_symbol ge id_f = Some b)
                      (FIND_FUNC: Globalenvs.Genv.find_funct_ptr ge b = Some fd)
                      (SEQK: is_seq_cont k)
     , step
         ge
-        (State f (c_app id_f args) k env sp s)
+        (State f (c_app id_f args) k env locals s)
         Events.E0
-        (Callstate fd v_args (Kcall f env sp k) s)
-  | step_tailapp: forall ge f id_f args k env sp s fd v_args b
+        (Callstate fd v_args (Kcall f env locals k) s)
+  | step_tailapp: forall ge f id_f args k env locals s fd v_args b
                          (EVAL: map_opt (fun e => eval e env) args = Some v_args)
                          (FIND_SYMB: Globalenvs.Genv.find_symbol ge id_f = Some b)
                          (FIND_FUNC: Globalenvs.Genv.find_funct_ptr ge b = Some fd)
                          (CALLK: is_call_cont k)
     , step
         ge
-        (State f (c_app id_f args) k env sp s)
+        (State f (c_app id_f args) k env locals s)
         Events.E0
         (Callstate fd v_args k s)
 
-  | step_ifthenelse: forall ge f e_i c_t c_e k env sp s b
+  | step_ifthenelse: forall ge f e_i c_t c_e k env locals s b
                             (EVAL: eval e_i env = Some (v_bool b))
     , step
         ge
-        (State f (c_if e_i c_t c_e) k env sp s)
+        (State f (c_if e_i c_t c_e) k env locals s)
         Events.E0
-        (State f (if b then c_t else c_e) k env sp s)
+        (State f (if b then c_t else c_e) k env locals s)
 
-  | step_while: forall ge f c_cond c_body k env sp s
+  | step_while: forall ge f c_cond c_body k env locals s
     , step
         ge
-        (State f (c_while c_cond c_body) k env sp s)
+        (State f (c_while c_cond c_body) k env locals s)
         Events.E0
-        (State f c_cond (Kloop1 c_cond c_body k) env sp s)
+        (State f c_cond (Kloop1 c_cond c_body k) env locals s)
 
   | step_internal_function: forall ge f args k s env
                                    (WT_ARGS: Forall2T wt_value args (List.map snd f.(fn_params)))
@@ -340,14 +350,22 @@ Section State.
         (Callstate (AST.Internal f) args k s)
         Events.E0
         (State f f.(fn_body) k env [] s)
+  | step_external_function: forall ge nm sig args k s
+                                   (ToX_out: CCInj.type_of_xtype sig.(AST.sig_res) t_unit)
+                                   (CALLK: is_call_cont k)
+    , step
+        ge
+        (Callstate (AST.External (AST.EF_external nm sig)) args k s)
+        Events.E0
+        (Returnstate v_tt k s)
 
-  | step_return_call_seq: forall ge v f env sp k s c_next k' env'
+  | step_return_call_seq: forall ge v f env locals k s c_next k' env'
                                  (RESOLVE: resolve_seq_cont k env v c_next env' k')
     , step
         ge
-        (Returnstate v (Kcall f env sp k) s)
+        (Returnstate v (Kcall f env locals k) s)
         Events.E0
-        (State f c_next k' env' sp s)
+        (State f c_next k' env' locals s)
   .
 
   Definition semantics (p: program) :=
@@ -370,3 +388,65 @@ Module Facts.
   Qed.
 
 End Facts.
+
+From GallinaC.Imp Require Import Model.
+From GallinaC.Utils Require Import OptionExt.
+
+Ltac guess_heap_substate :=
+  match goal with
+  | |- Algebra.Substate
+         (Heap.one {| Pointer.Addr.block := ?b; Pointer.Addr.offset := ?o |} ?v)
+         {| list_heap := ?bindings; alloc := ?a; |}
+    =>
+      exists ({| list_heap :=
+                  ListExt.replace_nth b (ListExt.replace_nth (N.to_nat o) None (List.nth b bindings [])) bindings;
+                  alloc := a|});
+      reflexivity
+  end.
+
+Ltac guess_wvalid :=
+  first
+    [ left; cbn -[Heap.one]; eexists;
+      match goal with
+      | |- exists v : Memval.memval,
+          Pointer.Pointer.References (Some ({| Pointer.Addr.block := ?b; Pointer.Addr.offset := ?o |}, _)) _
+          /\ Algebra.Substate (Heap.one _ v) {| list_heap := ?bindings; alloc := _ |}
+        =>
+          exists (default Memval.VUnit (List.nth (N.to_nat o) (List.nth b bindings []) None));
+          cbn -[Heap.one]
+      end;
+      split; [ now constructor | now cbn -[Heap.one]; guess_heap_substate ]
+    | right; right; reflexivity
+    ].
+
+Ltac builtin_step :=
+  first
+    [ eapply builtin_ret; reflexivity
+    | eapply builtin_read_var; [ reflexivity | reflexivity | now constructor ]
+    | eapply builtin_write_var; [ reflexivity | reflexivity | reflexivity | now constructor ]
+    | eapply builtin_alloc_ptr; [ reflexivity | reflexivity | now constructor | reflexivity ]
+    | eapply builtin_read_ptr; [ reflexivity | reflexivity | now constructor | now constructor ]
+    | eapply builtin_write_ptr; now constructor
+    | eapply builtin_shift_fw_ptr; [ reflexivity | reflexivity | now constructor | now guess_wvalid | now guess_wvalid ]
+    | eapply builtin_eq_ptr; [ reflexivity | reflexivity | guess_wvalid | guess_wvalid | reflexivity ]
+    ].
+
+Ltac one_step :=
+  first
+    [ apply Smallstep.star_refl
+    | eapply Smallstep.star_step with (t1 := Events.E0) (t2 := Events.E0);
+      [ first
+          [ apply step_bind
+          | eapply step_with_var; [ reflexivity | reflexivity ]
+          | eapply step_builtin_call_cont; [ now constructor | builtin_step | reflexivity ]
+          | eapply step_builtin_seq_cont; [ now constructor | builtin_step ]
+          | eapply step_app ; [ reflexivity | reflexivity | reflexivity | now constructor ]
+          | eapply step_while
+          | eapply step_internal_function; [ now repeat constructor | reflexivity | now constructor ]
+          | eapply step_external_function; [ now repeat constructor | now repeat constructor ]
+          | eapply step_return_call_seq; now constructor
+          ]
+      | auto
+      | reflexivity]
+    ];
+  cbn -[Globalenvs.Genv.globalenv].

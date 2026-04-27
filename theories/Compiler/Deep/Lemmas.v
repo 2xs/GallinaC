@@ -21,7 +21,7 @@ Section Determinism.
   Proof using St Hp.
     unfold Smallstep.single_events; cbn;
       intros s t s' Hstep.
-    inversion Hstep; subst; repeat constructor.
+    now inversion Hstep; subst; auto; constructor.
   Qed.
 
   Lemma receptive (p: program): Smallstep.receptive (@semantics St Hp p).
@@ -29,7 +29,7 @@ Section Determinism.
     constructor.
     - intros s t1 s1 t2 Hstep1 Hmatch.
       inversion Hstep1; subst; inversion Hmatch; subst;
-        eexists; now eauto.
+        eexists; try now eauto.
     - apply single_events.
   Qed.
 
@@ -51,7 +51,7 @@ Section Determinism.
     - repeat split; congruence.
     - repeat split; try (congruence).
       assert (nm0 = nm) by congruence; subst.
-      destruct v0, v; cbn in *; congruence; subst.
+      inversion VMV; subst; inversion VMV0; subst; congruence.
     - split; [ reflexivity | ].
       assert (nm0 = nm) by congruence; subst; clear DEREF0.
       assert (v1 = v) by congruence; subst; clear EVAL0.
@@ -64,7 +64,7 @@ Section Determinism.
         clear ALLOC0.
       now auto.
     - assert (v_ptr0 = v_ptr) by congruence; subst; clear EVAL0.
-      assert (v0 = v_read) by (destruct v0, v_read; cbn in *; congruence); subst; clear LOOKUP0.
+      assert (v0 = v_read) by (inversion VMV0; inversion VMV; congruence); subst; clear LOOKUP0.
       now auto.
     - assert (v_ptr0 = v_ptr) by congruence; subst; clear EVAL_ptr0.
       assert (v_data0 = v_data) by congruence; subst; clear EVAL_data0.

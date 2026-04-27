@@ -1,7 +1,7 @@
 From GallinaC.Examples.Reverse Require Import ReverseReify ReverseExecution.
 
 From GallinaC.Utils Require Import ListExt OptionExt.
-From GallinaC.Imp Require Import Canonical.
+From GallinaC.Imp Require Import Model.
 From GallinaC.Compiler.Deep Require Import OpSem Cmd Prog.
 
 From Stdlib Require Import PArith.
