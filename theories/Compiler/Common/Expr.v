@@ -138,26 +138,35 @@ Fixpoint eval (e: expr) (env: map_ctxt value): option value :=
       end
   end.
 
-Inductive wt_expr (ctxt : map_ctxt (type * bool)) : expr -> type -> Prop :=
+Inductive wt_expr (ctxt : map_ctxt (type * bool)) : expr -> type -> Type :=
 | wt_var : forall var_id t
-                  (Hget_env: PTree.get var_id ctxt = Some (t,true))
-                  (Hground: ground t),
+                  (GET: PTree.get var_id ctxt = Some (t,true))
+                  (GROUND: ground t),
     wt_expr ctxt (e_var var_id) t
 | wt_tt : wt_expr ctxt e_tt t_unit
 | wt_bool : forall b, wt_expr ctxt (e_bool b) t_bool
-| wt_nat : forall (n: nat) (Hbounded: Intops.Unsigned.Bounded n), wt_expr ctxt (e_nat n) t_nat
-| wt_ofst : forall (n: N) (Hbounded: Intops.Unsigned.Bounded n), wt_expr ctxt (e_ofst n) t_ofst
+| wt_nat : forall (n: nat) (BOUNDED: Intops.Unsigned.Bounded n), wt_expr ctxt (e_nat n) t_nat
+| wt_ofst : forall (n: N) (BOUNDED: Intops.Unsigned.Bounded n), wt_expr ctxt (e_ofst n) t_ofst
 | wt_nullptr : wt_expr ctxt e_nullptr t_ptr
-| wt_neg : forall b (Hwt_expr_b: wt_expr ctxt b t_bool), wt_expr ctxt (e_neg b) t_bool
+| wt_neg : forall b (WTb: wt_expr ctxt b t_bool), wt_expr ctxt (e_neg b) t_bool
 | wt_plus : forall l r
-                   (Hwt_expr_l: wt_expr ctxt l t_nat)
-                   (Hwt_expr_r: wt_expr ctxt r t_nat),
+                   (WTl: wt_expr ctxt l t_nat)
+                   (WTr: wt_expr ctxt r t_nat),
     wt_expr ctxt (e_plus l r) t_nat
 | wt_nat_eq : forall l r
-                     (Hwt_expr_l: wt_expr ctxt l t_nat)
-                     (Hwt_expr_r: wt_expr ctxt r t_nat),
+                     (WTl: wt_expr ctxt l t_nat)
+                     (WTr: wt_expr ctxt r t_nat),
     wt_expr ctxt (e_nat_eq l r) t_bool
 .
+Arguments wt_var {_} _ _ _ _.
+Arguments wt_tt {_}.
+Arguments wt_bool {_} _.
+Arguments wt_nat {_} _ _.
+Arguments wt_ofst {_} _ _.
+Arguments wt_nullptr {_}.
+Arguments wt_neg {_ _} _.
+Arguments wt_plus {_ _ _} _ _.
+Arguments wt_nat_eq {_ _ _} _ _.
 
 Fixpoint type_expr (env: map_ctxt (type * bool)) (e: expr): option type :=
   match e with
@@ -228,56 +237,55 @@ Module Facts.
   Qed.
   #[global] Hint Resolve expr_eqb_complete: deep_gallinac.
 
-  Lemma type_expr_spec: forall env e t, wt_expr env e t <-> type_expr env e = Some t.
+  Lemma type_expr_correct: forall env e t, wt_expr env e t -> type_expr env e = Some t.
   Proof.
-    split; [ intros WT | intros EQ ].
-    - revert t WT.
-      induction e; intros; cbn;
-        (try (now inversion WT; subst)).
-      + now inversion WT; subst;
-          inversion Hground; subst;
-          rewrite Hget_env.
-      + inversion WT as [ | | |?n [_ LE]| | | | | ]; subst.
-        destruct (Z.leb_spec (Z.of_nat n) (Unsigned.max_unsigned nat_uint32_t)); [ easy | ].
-        assert ((Z.of_nat n <= Unsigned.max_unsigned nat_uint32_t)%Z) by apply LE.
-        lia.
-      + inversion WT as [ | | | | ?o [_ LE]| | | | ]; subst.
-        destruct (Z.leb_spec (Z.of_N ofst) (Unsigned.max_unsigned n_ofst_t)); [ easy | ].
-        assert ((Z.of_N ofst <= Unsigned.max_unsigned n_ofst_t)%Z) by apply LE; lia.
-      + now inversion WT; subst; rewrite (IHe _ Hwt_expr_b).
-      + now inversion WT; subst;
-          rewrite (IHe1 _ Hwt_expr_l), (IHe2 _ Hwt_expr_r).
-      + now inversion WT; subst;
-          rewrite (IHe1 _ Hwt_expr_l), (IHe2 _ Hwt_expr_r).
-    - revert t EQ.
-      induction e; cbn; intros;
-        (try (now inversion EQ; subst; constructor)).
-      + constructor;
-          destruct (env ! i) as [[[] []] | ] eqn:Eget;
-          try congruence; inversion EQ; subst; constructor.
-      + destruct (Z.leb_spec (Z.of_nat n) (Unsigned.max_unsigned nat_uint32_t)); inversion EQ; subst; clear EQ.
-        constructor.
-        constructor; [ | apply H ].
-        change (Unsigned.min_unsigned nat_uint32_t) with (Z.of_nat 0).
-        apply Nat2Z.inj_le; lia.
-      + destruct (Z.leb_spec (Z.of_N ofst) (Unsigned.max_unsigned n_ofst_t)); inversion EQ; subst; clear EQ.
-        constructor.
-        constructor; [ | apply H].
-        change (Unsigned.min_unsigned n_ofst_t) with (Z.of_N 0).
-        apply N2Z.inj_le; lia.
-      + destruct (type_expr env e) as [[]|]; try discriminate.
-        inversion EQ; subst.
-        constructor.
-        now apply IHe.
-      + destruct (type_expr env e1) as [[]|]; try discriminate.
-        destruct (type_expr env e2) as [[]|]; try discriminate.
+    intros env e t WT.
+    induction WT; cbn;
+      first
+        [ now rewrite IHWT
+        | now rewrite IHWT1, IHWT2
+        | auto ].
+    - rewrite GET; inversion GROUND; reflexivity.
+    - inversion BOUNDED; subst.
+      change (IntCarrier.to_Z n) with (Z.of_nat n) in *.
+      destruct (Z.leb_spec (Z.of_nat n) (Unsigned.max_unsigned nat_uint32_t)); auto.
+      lia.
+    - destruct (Z.leb_spec (Z.of_N n) (Unsigned.max_unsigned n_ofst_t)); auto.
+      inversion BOUNDED.
+      change (IntCarrier.to_Z n) with (Z.of_N n) in *; lia.
+  Qed.
+
+  Lemma type_expr_complete: forall env e t (EQ: type_expr env e = Some t), wt_expr env e t.
+  Proof.
+    intros env e; revert env.
+    induction e; cbn; intros;
+      try (now inversion EQ; subst; constructor).
+    - destruct (env ! i) as [ [ [ | | | | | ] [ | ] ] | ] eqn:GET;
+        inversion EQ; subst; clear EQ;
+        constructor; auto; constructor.
+    - destruct (Z.leb (Z.of_nat n) (Unsigned.max_unsigned nat_uint32_t)) eqn:LEB;
         inversion EQ; subst; clear EQ.
-        constructor. now apply IHe1. now apply IHe2.
-      + destruct (type_expr env e1) as [[]|]; try discriminate.
-        destruct (type_expr env e2) as [[]|]; try discriminate.
-        inversion EQ; subst; constructor.
-        now apply IHe1.
-        now apply IHe2.
+      constructor; split.
+      apply Nat2Z.is_nonneg.
+      apply Z.leb_le, LEB.
+    - destruct (Z.leb (Z.of_N ofst) (Unsigned.max_unsigned n_ofst_t)) eqn:LEB;
+        inversion EQ; subst; clear EQ.
+      constructor; split; [ apply N2Z.is_nonneg | apply Z.leb_le, LEB].
+    - destruct (type_expr env e) as [ [ | | | | | ] | ] eqn:EQ';
+        inversion EQ; subst; clear EQ.
+      apply wt_neg, IHe, EQ'.
+    - destruct (type_expr env e1) as [ [ | | | | | ] | ] eqn:EQ1;
+        try discriminate;
+        destruct (type_expr env e2) as [ [ | | | | | ] | ] eqn:EQ2;
+        try discriminate;
+        inversion EQ; subst; clear EQ.
+      auto using wt_plus.
+    - destruct (type_expr env e1) as [ [ | | | | | ] | ] eqn:EQ1;
+        try discriminate;
+        destruct (type_expr env e2) as [ [ | | | | | ] | ] eqn:EQ2;
+        try discriminate;
+        inversion EQ; subst; clear EQ.
+      auto using wt_nat_eq.
   Qed.
 
   Lemma wt_value_expr_agree: forall ctxt v e t_v t_e, expr_of_value v e -> wt_value v t_v -> wt_expr ctxt e t_e -> t_v = t_e.
@@ -298,7 +306,7 @@ Module Facts.
   Qed.
   #[global] Hint Resolve wt_expr_fun: deep_gallinac.
 
-  Lemma wt_expr_ground: forall ctxt e t,
+  Lemma wt_expr_ground: forall [ctxt e t],
       wt_expr ctxt e t -> ground t.
   Proof.
     intros ctxt e t Hwt.
@@ -310,7 +318,7 @@ Module Facts.
       wt_expr ctxt e t -> Types.nonground t -> False.
   Proof.
     intros ctxt e t Hwt Hnonground.
-    assert (Hground: ground t) by apply (wt_expr_ground _ _ _ Hwt).
+    assert (Hground: ground t) by apply (wt_expr_ground Hwt).
     apply (Types.ground_nonground_exclude _ Hground Hnonground).
   Qed.
   #[global] Hint Resolve wt_expr_not_nonground: deep_gallinac.

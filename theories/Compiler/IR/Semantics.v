@@ -405,7 +405,7 @@ Section Semantics.
                               (DEREF: List.nth_error locals n = Some nm)
                               (MUTATE: Store.mutate s.(store) nm (memval_of_value v) = Some st')
                               (WT: wt_value v t)
-                              (STORE: (sized t /\ exists v_cc mc, Mem.store mc m sp (offset_to_offset (Z.of_nat n)) v_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.inj_value inj v v_cc) \/ (~sized t /\ m' = m))
+                              (STORE: (inhabited (sized t) /\ exists v_cc mc, Mem.store mc m sp (offset_to_offset (Z.of_nat n)) v_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj v v_cc) \/ (notT (sized t) /\ m' = m))
     , builtin
         (c_write_var n t e) genv env locals sp
         s m inj
@@ -421,7 +421,7 @@ Section Semantics.
                               (STORE_SIZE: Mem.store AST.Mptr m_i0 b_cc (- Memdata.size_chunk AST.Mptr) (Values.Vptrofs (Ptrofs.repr (Z.of_N v_size))) = (Some m_i1))
                               (STORE_INIT: fold_left_opt (fun m n => Mem.store mc m b_cc (Z.of_nat (n * Memdata.size_chunk_nat mc)) v_cc) (List.seq 0 (N.to_nat v_size)) m_i1 = Some m')
                               (EQmc: type_mem_chunk t = Some mc)
-                              (INJ: CCInj.inj_value inj v_init v_cc)
+                              (INJ: CCInj.InjValue inj v_init v_cc)
     , builtin
         (c_alloc_ptr e_size t e_init id_ptr id_init) genv env locals sp
         s m inj
@@ -433,7 +433,7 @@ Section Semantics.
                              (LOOKUP: Heap.lookup s.(heap) v_ptr = Some (memval_of_value v_read))
                              (WT: wt_value v_read t)
                              (LOAD: sized t -> exists v_ptr_b_cc v_ptr_ofs_cc v_read_cc mc,
-                                   Mem.load mc m v_ptr_b_cc (Ptrofs.unsigned v_ptr_ofs_cc) = Some v_read_cc /\ type_mem_chunk t = Some mc /\ CCInj.inj_value inj (Value.v_ptr v_ptr) (Values.Vptr v_ptr_b_cc v_ptr_ofs_cc) /\ CCInj.inj_value inj v_read v_read_cc)
+                                   Mem.load mc m v_ptr_b_cc (Ptrofs.unsigned v_ptr_ofs_cc) = Some v_read_cc /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj (Value.v_ptr v_ptr) (Values.Vptr v_ptr_b_cc v_ptr_ofs_cc) /\ CCInj.InjValue inj v_read v_read_cc)
     , builtin
         (c_read_ptr e_ptr t) genv env locals sp
         s m inj
@@ -444,7 +444,7 @@ Section Semantics.
                               (EVAL_data: eval e_data env = Some v_data)
                               (MUTATE: Heap.mutate s.(heap) v_ptr (memval_of_value v_data) = Some hp')
                               (WT: wt_value v_data t)
-                              (STORE: (sized t /\ exists v_ptr_b_cc v_ptr_ofs_cc v_data_cc mc, Mem.store mc m v_ptr_b_cc (Ptrofs.unsigned v_ptr_ofs_cc) v_data_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.inj_value inj (Value.v_ptr v_ptr) (Values.Vptr v_ptr_b_cc v_ptr_ofs_cc) /\ CCInj.inj_value inj v_data v_data_cc) \/ (~sized t /\ m' = m))
+                              (STORE: (inhabited (sized t) /\ exists v_ptr_b_cc v_ptr_ofs_cc v_data_cc mc, Mem.store mc m v_ptr_b_cc (Ptrofs.unsigned v_ptr_ofs_cc) v_data_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj (Value.v_ptr v_ptr) (Values.Vptr v_ptr_b_cc v_ptr_ofs_cc) /\ CCInj.InjValue inj v_data v_data_cc) \/ (notT (sized t) /\ m' = m))
 
     , builtin
         (c_write_ptr e_ptr t e_data) genv env locals sp
@@ -455,7 +455,7 @@ Section Semantics.
                              (EVAL: eval e_ptr env = Some (Value.v_ptr (Some (addr, prov))))
                              (FREE_GC: Heap.free s.(heap) (Some (addr, prov)) = Some hp')
                              (FREE_CC: Mem.free m b (- Memdata.size_chunk AST.Mptr) (Z.of_N (Provenance.prov_meofst prov)) = Some m')
-                             (INJ: CCInj.inj_value inj (v_ptr (Some (addr, prov))) (Values.Vptr b ofs))
+                             (INJ: CCInj.InjValue inj (v_ptr (Some (addr, prov))) (Values.Vptr b ofs))
     , builtin
         (c_free_ptr e_ptr) genv env locals sp
         s m inj
@@ -681,16 +681,16 @@ Section Typing.
   Context {St: Store}.
   Context {Hp: Heap}.
 
-  Record wt_env (f: function) (ty_env: map_ctxt (type * bool)) (val_env: env): Prop :=
+  Record wt_env (f: function) (ty_env: map_ctxt (type * bool)) (val_env: env): Type :=
     {
       wt_val_env: forall var_id t,
         In (var_id,t) f.(fn_temps) ->
-        exists t,
+        { t &
           match PTree.get var_id val_env with
-          | Some v => wt_value v t /\ (PTree.get var_id ty_env = Some (t,true))
+          | Some v => wt_value v t + (PTree.get var_id ty_env = Some (t,true))
           | None => PTree.get var_id ty_env = Some (t, false)
-          end;
-      wv_ty_env: forall var_id t b, PTree.get var_id ty_env = Some (t, b) -> (if b then exists v, PTree.get var_id val_env = Some v /\ wt_value v t else PTree.get var_id val_env = None) /\ In (var_id,t) f.(fn_temps);
+          end };
+      wv_ty_env: forall var_id t b, PTree.get var_id ty_env = Some (t, b) -> (if b then { v & PTree.get var_id val_env = Some v & wt_value v t } else PTree.get var_id val_env = None) * In (var_id,t) f.(fn_temps);
     }.
 
   (* Continuations can be viewed as functions with type t -> k, where
@@ -738,10 +738,10 @@ Section Typing.
   | wt_Kcall: forall ctx f env locals sp k t ty_env
                      (Hwt_fn: wt_function ctx f)
                      (Hwt_env: wt_env f ty_env env)
-                     (Hwt_cont: wt_cont (with_pure ty_env ctx) k t),
+                     (Hwt_cont: wt_cont (with_pure ty_env (with_stack (List.map (fun _ => tt) locals) ctx)) k t),
       wt_cont_call ctx (Kcall f env locals sp k) t
 
-  with wt_cont: ctxt (type * bool) Empty_set fundef vardef -> @cont St -> type -> Prop :=
+  with wt_cont: ctxt (type * bool) unit fundef vardef -> @cont St -> type -> Prop :=
   | wt_cont_Kbind: forall ctx id c k t_b t_c
                           (Hget_pure: get_pure id ctx = Some (t_b, false))
                           (Hwt_cmd: wt_cmd (set_pure id (t_b, true) ctx) c t_c)
@@ -760,16 +760,16 @@ Section Typing.
                            (Hget_pure: get_pure id_body ctx = Some (t_unit, b)),
       wt_cont ctx (Kloop2 c_cond id_cond c_body id_body k) t_unit
   | wt_cont_other: forall ctx k tret
-                          (Hwt_cont_call: wt_cont_call (with_pure (PTree.empty _) ctx) k tret),
+                          (Hwt_cont_call: wt_cont_call (with_pure (PTree.empty _) (with_stack [] ctx)) k tret),
       wt_cont ctx k tret
   .
 
-  Record wt_State (f: function) (c: cmd) (k: @cont St) (e: env) (locals: list (@name St)) (sp: Values.block) (s: @Primitives.State St Hp) (m: mem) (inj: injection) (ctx: ctxt (type * bool) Empty_set fundef vardef) (t: type) : Prop :=
+  Record wt_State (f: function) (c: cmd) (k: @cont St) (e: env) (locals: list (@name St)) (sp: Values.block) (s: @Primitives.State St Hp) (m: mem) (inj: injection) (ctx: ctxt (type * bool) unit fundef vardef) (t: type) : Prop :=
     {
-      State_wt_function: wt_function (with_pure (PTree.empty _) ctx) f;
-      State_wt_cmd: wt_cmd ctx c t;
+      State_wt_function: inhabited (wt_function (with_pure (PTree.empty _) (with_stack [] ctx)) f);
+      State_wt_cmd: inhabited (wt_cmd ctx c t);
       State_wt_cont: wt_cont ctx k t;
-      State_wt_env: wt_env f ctx e;
+      State_wt_env: inhabited (wt_env f ctx e);
       State_wf_inj: CCInj.wf s m inj;
       State_wt_stack: forall n loc, List.nth_error locals n = Some loc -> In (loc, (sp, memval_memsize * n, true)) inj.(inj_st_map);
     }.
@@ -792,7 +792,7 @@ Section Typing.
     , wt_state p (Returnstate v k s m inj)
   .
 
-  Inductive step_ctxt_effect (ctx: ctxt (type * bool) Empty_set fundef vardef): cmd -> @cont St -> ctxt (type * bool) Empty_set fundef vardef -> Prop :=
+  Inductive step_ctxt_effect (ctx: ctxt (type * bool) unit fundef vardef): cmd -> @cont St -> ctxt (type * bool) unit fundef vardef -> Prop :=
   | step_ctxt_effect_bind : forall b_id t_b c_b c_c t_c k, step_ctxt_effect ctx (c_bind b_id t_b c_b c_c t_c) k ctx
   .
   (* | step_ctxt_effect_prim : forall c ge e sp s m inj v s' m' inj' (Hprim: @prim_effect St Hp c ge e sp s m inj v s' m' inj'), step_ctxt_effect ctx c ctx *)

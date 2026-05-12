@@ -59,6 +59,7 @@ Definition get_global {P S GF GV} x (c: ctxt P S GF GV): option _ :=
 (* Definition set_global {P S GF GV} x y (c: ctxt P S GF GV) := with_global (PTree.set x y (ctxt_global c)) c. *)
 Definition get_stack {P S GF GV} n (c: ctxt P S GF GV): option S := List.nth_error (ctxt_stack c) n.
 Definition set_stack {P S GF GV} n y (c: ctxt P S GF GV) := with_stack (ListExt.set_nth (ctxt_stack c) n y) c.
+Definition push_stack {P S GF GV} y (c: ctxt P S GF GV) := with_stack ((ctxt_stack c)++[y]) c.
 
 Coercion ctxt_pure: ctxt >-> map_ctxt.
 

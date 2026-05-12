@@ -7,7 +7,7 @@ From GallinaC.Imp Require Import Uint32 Uintptr.
 From GallinaC.Compiler.Common Require Import Ctxt Value Types Expr.
 From GallinaC.Compiler.Deep Require Import Cmd Prog.
 
-Fixpoint type_cmd (ty_ctxt: ctxt (type * bool) Empty_set fundef vardef) c: option type :=
+Fixpoint type_cmd (ty_ctxt: ctxt (type * bool) unit fundef vardef) c: option type :=
   match c with
   | c_ret e => type_expr ty_ctxt e
   | c_bind b_id t_b c_b c_c =>
@@ -99,67 +99,78 @@ Fixpoint type_cmd (ty_ctxt: ctxt (type * bool) Empty_set fundef vardef) c: optio
 
 (* TODO find a way to guarantee have a somewhat usable progress implied by wt_cmd *)
 (* TODO previous effort added an output context, but failed at the if *)
-Inductive wt_cmd: ctxt (type * bool) Empty_set fundef vardef -> cmd -> type -> Prop :=
-| wt_ret : forall ty_ctxt e t
-                  (Hwt_expr: wt_expr ty_ctxt.(ctxt_pure) e t),
+Inductive wt_cmd: ctxt (type * bool) unit fundef vardef -> cmd -> type -> Type :=
+| wt_ret : forall {ty_ctxt e t}
+                  (WTe: wt_expr ty_ctxt.(ctxt_pure) e t),
     wt_cmd ty_ctxt (c_ret e) t
-| wt_bind : forall ty_ctxt x c1 c2 t1 t2
-                   (Hbind_target_unbound: get_pure x ty_ctxt = Some (t1, false))
-                   (Hwt_cmd_bind: wt_cmd ty_ctxt c1 t1)
-                   (Hwt_cmd_cont: wt_cmd (set_pure x (t1, true) ty_ctxt) c2 t2),
+| wt_bind : forall {ty_ctxt x c1 c2 t1 t2}
+                   (UNBOUND: get_pure x ty_ctxt = Some (t1, false))
+                   (WTm: wt_cmd ty_ctxt c1 t1)
+                   (WTf: wt_cmd (set_pure x (t1, true) ty_ctxt) c2 t2),
     wt_cmd ty_ctxt (c_bind x t1 c1 c2) t2
-| wt_if : forall ty_ctxt e c1 c2 t,
-    wt_expr ty_ctxt.(ctxt_pure) e t_bool -> wt_cmd ty_ctxt c1 t -> wt_cmd ty_ctxt c2 t ->
+| wt_if : forall {ty_ctxt e c1 c2 t}
+                 (WTcond:wt_expr ty_ctxt.(ctxt_pure) e t_bool)
+                 (WTthen: wt_cmd ty_ctxt c1 t)
+                 (WTelse: wt_cmd ty_ctxt c2 t),
     wt_cmd ty_ctxt (c_if e c1 c2) t
 | wt_while: forall {ty_ctxt c_cond c_body},
     wt_cmd ty_ctxt c_cond t_bool -> wt_cmd ty_ctxt c_cond t_unit -> wt_cmd ty_ctxt (c_while c_cond c_body) t_unit
 | wt_with_var: forall {ty_ctxt t_v e_v c_c t_c},
-    wt_expr ty_ctxt.(ctxt_pure) e_v t_v -> wt_cmd ty_ctxt c_c t_c -> wt_cmd ty_ctxt (c_with_var t_v e_v c_c) t_c
-| wt_read_var : forall ty_ctxt n t,
-    ground t ->
-    wt_cmd ty_ctxt (c_read_var n t) t
-| wt_write_var : forall ty_ctxt n e t,
-    wt_expr ty_ctxt.(ctxt_pure) e t -> ground t ->
+    wt_expr ty_ctxt.(ctxt_pure) e_v t_v -> wt_cmd (push_stack tt ty_ctxt) c_c t_c -> wt_cmd ty_ctxt (c_with_var t_v e_v c_c) t_c
+| wt_read_var : forall {ty_ctxt} {n} {t}
+                       (GROUND: ground t)
+                       (Nth: get_stack n ty_ctxt = Some tt),
+                       wt_cmd ty_ctxt (c_read_var n t) t
+| wt_write_var : forall {ty_ctxt} {n} {e t}
+                        (WT: wt_expr ty_ctxt.(ctxt_pure) e t)
+                        (GROUND: ground t)
+                        (Nth: get_stack n ty_ctxt = Some tt),
     wt_cmd ty_ctxt (c_write_var n t e) t_unit
-| wt_alloc_ptr : forall ty_ctxt n t e,
-    wt_expr ty_ctxt.(ctxt_pure) n t_ofst ->
-    wt_expr ty_ctxt.(ctxt_pure) e t -> ground t ->
+| wt_alloc_ptr : forall {ty_ctxt n t e}
+                        (WTsize: wt_expr ty_ctxt.(ctxt_pure) n t_ofst)
+                        (WTinit: wt_expr ty_ctxt.(ctxt_pure) e t)
+                        (GROUND: ground t),
     wt_cmd ty_ctxt (c_alloc_ptr n t e) t_ptr
-| wt_read_ptr : forall ty_ctxt t p,
-    wt_expr ty_ctxt.(ctxt_pure) p t_ptr -> ground t ->
+| wt_read_ptr : forall {ty_ctxt t p}
+                       (WTptr: wt_expr ty_ctxt.(ctxt_pure) p t_ptr)
+                       (GROUND: ground t),
     wt_cmd ty_ctxt (c_read_ptr p t) t
-| wt_write_ptr : forall ty_ctxt p t e,
-    wt_expr ty_ctxt.(ctxt_pure) p t_ptr -> wt_expr ty_ctxt e t ->
-    ground t ->
+| wt_write_ptr : forall {ty_ctxt p t e}
+                        (WTptr: wt_expr ty_ctxt.(ctxt_pure) p t_ptr)
+                        (WTval: wt_expr ty_ctxt e t)
+                        (GROUND: ground t),
     wt_cmd ty_ctxt (c_write_ptr p t e) t_unit
-| wt_free_ptr : forall ty_ctxt p,
-    wt_expr ty_ctxt.(ctxt_pure) p t_ptr ->
+| wt_free_ptr : forall {ty_ctxt p}
+                       (WTptr: wt_expr ty_ctxt.(ctxt_pure) p t_ptr),
     wt_cmd ty_ctxt (c_free_ptr p) t_unit
-| wt_shift_fw_ptr: forall ty_ctxt p n,
-    wt_expr ty_ctxt.(ctxt_pure) p t_ptr -> wt_expr ty_ctxt n t_ofst ->
+| wt_shift_fw_ptr: forall {ty_ctxt p n}
+                          (WTptr: wt_expr ty_ctxt.(ctxt_pure) p t_ptr)
+                          (WTofst: wt_expr ty_ctxt n t_ofst),
     wt_cmd ty_ctxt (c_shift_fw_ptr p n) t_ptr
-| wt_shift_bw_ptr: forall {ty_ctxt p n},
-    wt_expr ty_ctxt.(ctxt_pure) p t_ptr -> wt_expr ty_ctxt n t_ofst ->
+| wt_shift_bw_ptr: forall {ty_ctxt p n}
+                          (WTptr: wt_expr ty_ctxt.(ctxt_pure) p t_ptr)
+                          (WTofst: wt_expr ty_ctxt n t_ofst),
     wt_cmd ty_ctxt (c_shift_bw_ptr p n) t_ptr
-| wt_ptr_eq: forall ty_ctxt p1 p2,
-    wt_expr ty_ctxt.(ctxt_pure) p1 t_ptr -> wt_expr ty_ctxt p2 t_ptr ->
+| wt_ptr_eq: forall {ty_ctxt p1 p2}
+                    (WTl: wt_expr ty_ctxt.(ctxt_pure) p1 t_ptr)
+                    (WTr: wt_expr ty_ctxt p2 t_ptr),
     wt_cmd ty_ctxt (c_ptr_eq p1 p2) t_bool
 | wt_app : forall
     {ty_ctxt f_id args fn}
     (Hfind_fn: Ctxt.get_global f_id ty_ctxt = Some (AST.Gfun (AST.Internal fn)))
     (Hreturn_ground: ground fn.(fn_return))
-    (WT_args: List.Forall2 (wt_expr ty_ctxt) args (List.map snd fn.(fn_params))),
+    (WT_args: ListExt.Forall2T (wt_expr ty_ctxt) args (List.map snd fn.(fn_params))),
     wt_cmd ty_ctxt (c_app f_id args) fn.(fn_return)
 .
 
-Lemma type_cmd_spec: forall ty_ctxt c t, wt_cmd ty_ctxt c t <-> type_cmd ty_ctxt c = Some t.
-Proof.
-  split; [ intros WT | intros EQ ].
-  - revert ty_ctxt t WT.
-    induction c; cbn; intros; inversion WT; subst; admit.
-  - revert ty_ctxt t EQ.
-    induction c; cbn; intros; admit.
-Admitted.
+(* Lemma type_cmd_spec: forall ty_ctxt c t, wt_cmd ty_ctxt c t <-> type_cmd ty_ctxt c = Some t. *)
+(* Proof. *)
+(*   split; [ intros WT | intros EQ ]. *)
+(*   - revert ty_ctxt t WT. *)
+(*     induction c; cbn; intros; inversion WT; subst; admit. *)
+(*   - revert ty_ctxt t EQ. *)
+(*     induction c; cbn; intros; admit. *)
+(* Admitted. *)
 
 Definition wt_f_extra (f_extra: f_extra): Prop := True.
 

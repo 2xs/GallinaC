@@ -1,0 +1,25 @@
+From GallinaC.Compiler.Common Require Import Types Ctxt Value Expr.
+From GallinaC.Compiler.Deep Require Import Cmd Prog Typing.
+From GallinaC.Compiler.Deep Require Export OpSem Denotation.
+
+(* Lemma step_correct *)
+(*   { St Hp genv events} *)
+(*   {s s': @state St Hp} (STEP: step genv s events s') : *)
+(*   forall *)
+(* let s := state cfg in *)
+(* let venvs := map snd (stack cfg) in *)
+(* let stackt := *)
+(*   map stack_to_stackt (stack cfg) in *)
+(* let ctxts := map snd stackt in *)
+(* let s' := state cfg' in *)
+(* let venvs' := map snd (stack cfg') in *)
+(* let stackt' := map stack_to_stackt (stack cfg') in *)
+(* let ctxts' := map snd stackt' in *)
+(* forall *)
+(*   (Hvenvs : wt_venvs venvs) *)
+(*   (t : type) (wt : wt_cmdl stackt t) *)
+(*   (envs : denote_ctxts ctxts) (Hagr : envs_agree envs venvs), *)
+(* let Hvenvs'_wt'_envs'_Hagr' := step_wt_env Hstep Hvenvs wt Hagr in *)
+(* let wt' := snd (fst Hvenvs'_wt'_envs'_Hagr') in *)
+(* let envs' := proj1_sig (snd Hvenvs'_wt'_envs'_Hagr') in *)
+(* denote_cmdl wt envs s = denote_cmdl wt' envs' s'. *)

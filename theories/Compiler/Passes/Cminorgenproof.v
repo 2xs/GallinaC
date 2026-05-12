@@ -71,7 +71,7 @@ Section Match.
   Qed.
 
   Definition match_temps {St} inj (env: Semantics.env) (tenv: Cminor.env): Prop :=
-    forall id v, Maps.PTree.get id env = Some v -> v = Value.v_tt \/ exists v', Maps.PTree.get id tenv = Some v' /\ @CCInj.inj_value St inj v v'.
+    forall id v, Maps.PTree.get id env = Some v -> v = Value.v_tt \/ exists v', Maps.PTree.get id tenv = Some v' /\ inhabited (@CCInj.inj_value St inj v v').
 
   Inductive match_cont {St} (prog: Prog.program) (inj: @CCInj.injection St): compilenv -> @Semantics.cont St -> Cminor.cont -> Prop :=
   | match_cont_Kbind_Kseq: forall {cenv id_b c k tc tk}
@@ -158,7 +158,7 @@ Section Match.
   | match_returnstate:
     forall r k m s inj tr tk cenv
            (WT: Semantics.wt_state p (Semantics.Returnstate r k s m inj))
-           (MRET: r = Value.v_tt \/ CCInj.inj_value inj r tr)
+           (MRET: r = Value.v_tt \/ inhabited (CCInj.inj_value inj r tr))
            (MK: match_cont p inj cenv k tk),
       match_states p (Semantics.Returnstate r k s m inj)
         (Cminor.Returnstate tr tk m)
@@ -186,11 +186,11 @@ Section EXPRESSIONS_HELPER.
                     (ListExt.SBindIn_BindIn
                        (ListExt.SBinds_In
                           MCENV.(temps_sbinds)
-                                  (MCENV.(temps_of_ty_ctxt) var_id t true Hget_env))
+                                  (MCENV.(temps_of_ty_ctxt) var_id t true GET))
                  ))
         as Hrewrite;
         rewrite Hrewrite, Types.type_eqb_refl; clear Hrewrite.
-      destruct Hground; cbn;
+      destruct GROUND; cbn;
         eexists; split; try reflexivity; now repeat econstructor.
     - eexists; split; auto; now constructor.
     - eexists; (split; [ auto | right; eexists; eexists; eauto ]).
@@ -235,12 +235,12 @@ Section EXPRESSIONS_HELPER.
     (MCENV: match_cenv cenv ctx)
     (Hmatch_temps: match_temps inj env tenv)
     (Heval: Semantics.eval e env = Some v):
-    exists tv, (forall tge sp m, Cminor.eval_expr tge sp tenv m e' tv) /\ @CCInj.inj_value St inj v tv.
+    exists tv, (forall tge sp m, Cminor.eval_expr tge sp tenv m e' tv) /\ inhabited (@CCInj.inj_value St inj v tv).
   Proof.
     revert e' mc v Htransl_sized Heval.
     induction Hwt_expr; simpl; intros.
     - destruct (Maps.PTree.get var_id env) eqn:Eget_val_env; [ inversion Heval; subst; clear Heval | discriminate ].
-      specialize (MCENV.(temps_of_ty_ctxt) var_id t true Hget_env) as HIn.
+      specialize (MCENV.(temps_of_ty_ctxt) var_id t true GET) as HIn.
       unfold transl_expr_sized in Htransl_sized;
         cbn in Htransl_sized.
       apply bind_inversion in Htransl_sized as ( [  | ] & Htransl_sized & Heq );
@@ -257,9 +257,9 @@ Section EXPRESSIONS_HELPER.
       specialize (Hmatch_temps var_id v Eget_val_env) as [ Heq | ( tv & Htenv_get & Hval_cc ) ]; subst.
       {
         exfalso.
-        specialize (Hwt_env.(Semantics.wv_ty_env) var_id t true Hget_env) as ( (v & Eget_val_env' & Hwt_val ) & Hfn_temps ).
+        specialize (Hwt_env.(Semantics.wv_ty_env) var_id t true GET) as [ [ v GETenv WTval ] INtemps].
         assert (v = Value.v_tt) by congruence; subst.
-        now inversion Hwt_val; subst.
+        now inversion WTval; subst.
       }
       exists tv.
       split; [ | assumption ].
@@ -268,20 +268,20 @@ Section EXPRESSIONS_HELPER.
     - inversion Htransl_sized; subst.
       inversion Heval; subst; clear Heval.
       exists (if b then Values.Vint Int.one else Values.Vint Int.zero).
-      split; [ constructor; destruct b; reflexivity | constructor ].
+      split; [ constructor; destruct b; reflexivity | now repeat constructor ].
     - inversion Htransl_sized; subst; clear Htransl_sized.
       inversion Heval; subst; clear Heval.
       exists (Values.Vint (Int.repr (Z.of_nat n))).
       split.
       now constructor.
-      constructor.
-      auto.
+      constructor; constructor.
+      exact BOUNDED.
       apply Int.unsigned_repr.
       eauto with ints.
     - inversion Htransl_sized; subst; clear Htransl_sized.
       inversion Heval; subst.
       destruct (Archi.ptr64) eqn:Earchi;
-        eexists; (split; [ unfold make_size_t; rewrite Earchi; now constructor | constructor; [ assumption | rewrite Earchi ] ]).
+        eexists; (split; [ unfold make_size_t; rewrite Earchi; now constructor | constructor; constructor; [ assumption | rewrite Earchi ] ]).
       specialize (Unsigned.CompCert.Ptrofs.unsigned_range_cc_64 (UInt := n_ofst_t) eq_refl Earchi) as RANGE; eexists; split; [ | eauto ]; now apply Int64.unsigned_repr, RANGE.
       specialize (Unsigned.CompCert.Ptrofs.unsigned_range_cc_32 (UInt := n_ofst_t) eq_refl Earchi) as RANGE; eexists; split; [ | eauto ]; now apply Int.unsigned_repr, RANGE.
     - inversion Htransl_sized; subst.

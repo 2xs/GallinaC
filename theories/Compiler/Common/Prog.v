@@ -1,3 +1,4 @@
+From Corelib Require Derive.
 From Stdlib Require Import ZArith.
 
 From compcert.common Require AST Globalenvs Events.
@@ -99,30 +100,23 @@ Definition program_of_program [cmd f_extra p_extra] (p: program cmd f_extra p_ex
  *)
 #[local] Definition mk_pair_with_false [A: Type] (a: A):= (a,false).
 #[local] Definition mk_uninit_pair (idt: AST.ident*type) := (fst idt, mk_pair_with_false (snd idt)).
-Definition mk_function_ctxt [cmd f_extra] (temps: list (AST.ident * type)) (ctx: ctxt Empty_set Empty_set (fundef cmd f_extra) vardef): ctxt (type * bool) Empty_set (fundef cmd f_extra) vardef :=
+#[local] Definition mk_pair_with_true [A: Type] (a: A):= (a,true).
+#[local] Definition mk_init_pair (idt: AST.ident*type) := (fst idt, mk_pair_with_true (snd idt)).
+Definition mk_function_ctxt [cmd f_extra] (params: list (AST.ident * type)) (temps: list (AST.ident * type)) (ctx: ctxt Empty_set Empty_set (fundef cmd f_extra) vardef): ctxt (type * bool) unit (fundef cmd f_extra) vardef :=
   Ctxt.with_pure
-    (Maps.PTree_Properties.of_list (List.map mk_uninit_pair temps))
-    ctx.
-
-Definition globdef_type [cmd f_extra] (gdef: globdef cmd f_extra): type :=
-  match gdef with
-  | AST.Gfun (AST.Internal f) => t_fun (List.map snd f.(fn_params)) f.(fn_return)
-  | AST.Gfun (AST.External AST.EF_malloc) => t_fun [t_nat] t_ptr
-  | AST.Gfun (AST.External AST.EF_free) => t_fun [t_ptr] t_unit
-  | AST.Gfun (AST.External _) => t_fun [] t_unit
-  | AST.Gvar v => v.(AST.gvar_info).(var_type)
-  end.
+    (Maps.PTree_Properties.of_list (List.map mk_init_pair params ++ List.map mk_uninit_pair temps))
+    (Ctxt.with_stack [] ctx).
 
 Definition mk_glob_ctxt [cmd f_extra p_extra] (p: program cmd f_extra p_extra): ctxt Empty_set Empty_set (fundef cmd f_extra) vardef :=
   with_global (Globalenvs.Genv.globalenv p) (ctxt_emp Empty_set Empty_set Empty_set Empty_set []).
 
 (* ctx here is the global program context *)
-Record wt_function [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Prop) (wt_cmd: ctxt (type * bool) Empty_set (fundef cmd f_extra) vardef -> cmd -> type -> Prop) (ctx: ctxt Empty_set Empty_set (fundef cmd f_extra) vardef) (func: (function cmd f_extra)): Prop :=
+Record wt_function [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Type) (wt_cmd: ctxt (type * bool) unit (fundef cmd f_extra) vardef -> cmd -> type -> Type) (ctx: ctxt Empty_set Empty_set (fundef cmd f_extra) vardef) (func: (function cmd f_extra)): Type :=
   {
     wt_fn_return: ground func.(fn_return);
-    wt_fn_params: List.Forall (fun idt => ground (snd idt)) func.(fn_params);
-    wt_fn_temps: List.Forall (fun idt => ground (snd idt)) func.(fn_temps);
-    wt_fn_cmd: wt_cmd (mk_function_ctxt func.(fn_temps) ctx) func.(fn_body) func.(fn_return);
+    wt_fn_params: ForallT (fun idt => ground (snd idt)) func.(fn_params);
+    wt_fn_temps: ForallT (fun idt => ground (snd idt)) func.(fn_temps);
+    wt_fn_cmd: wt_cmd (mk_function_ctxt func.(fn_params) func.(fn_temps) ctx) func.(fn_body) func.(fn_return);
     wt_fn_extra: wt_f_extra func.(fn_extra);
 
     wt_fn_params_sbinds: SBinds func.(fn_params);
@@ -133,9 +127,10 @@ Record wt_function [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Prop) (wt_c
 Inductive wt_external_function: AST.external_function -> Prop :=
 | wt_EF_malloc: wt_external_function AST.EF_malloc
 | wt_EF_free: wt_external_function AST.EF_free
+| wt_EF_external: forall nm sig_cc sig_gc (SIG: ext_funsig (AST.EF_external nm sig_cc) sig_gc), wt_external_function (AST.EF_external nm sig_cc)
 .
 
-Inductive wt_fundef [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Prop) (wt_cmd: ctxt (type * bool) Empty_set (fundef cmd f_extra) vardef -> cmd -> type -> Prop): ctxt Empty_set Empty_set (fundef cmd f_extra) vardef -> (fundef cmd f_extra) -> Prop :=
+Inductive wt_fundef [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Type) (wt_cmd: ctxt (type * bool) unit (fundef cmd f_extra) vardef -> cmd -> type -> Type): ctxt Empty_set Empty_set (fundef cmd f_extra) vardef -> (fundef cmd f_extra) -> Type :=
 | wt_Internal:
   forall ctx func
          (Hwt_function: wt_function f_extra wt_f_extra wt_cmd ctx func),
@@ -144,7 +139,7 @@ Inductive wt_fundef [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Prop) (wt_
 .
 
 Inductive wt_fundef_call cmd f_extra: list value -> (fundef cmd f_extra) -> Prop :=
-| wt_call_Internal: forall args f, Forall2 wt_value args (List.map snd f.(fn_params)) -> wt_fundef_call cmd f_extra args (AST.Internal f)
+| wt_call_Internal: forall args f, Forall2T wt_value args (List.map snd f.(fn_params)) -> wt_fundef_call cmd f_extra args (AST.Internal f)
 | wt_call_malloc: forall o, wt_fundef_call cmd f_extra [v_ofst o] (AST.External AST.EF_malloc)
 | wt_call_free: forall p, wt_fundef_call cmd f_extra [v_ptr p] (AST.External AST.EF_free)
 .
@@ -159,7 +154,7 @@ Inductive wt_init_data: list AST.init_data -> type -> Prop :=
 
 Record wt_globvar cmd f_extra (ctx: ctxt Empty_set Empty_set (fundef cmd f_extra) vardef) (id: AST.ident) (globvar: AST.globvar vardef): Prop :=
   {
-    wt_globvar_type_ground: Types.ground globvar.(AST.gvar_info).(var_type);
+    wt_globvar_type_ground: inhabited (Types.ground globvar.(AST.gvar_info).(var_type));
     wt_globvar_ctx: get_global id ctx = Some (AST.Gvar globvar);
     wt_globvar_init_len: List.length globvar.(AST.gvar_init) = 1;
     wt_globvar_init_type: wt_init_data globvar.(AST.gvar_init) globvar.(AST.gvar_info).(var_type);
@@ -228,6 +223,40 @@ Module Facts.
     : NoDup p.(prog_public).
   Proof.
     eapply NoDupA_NoDup, wt_program_public_NoDupA, WT.
+  Qed.
+
+  Definition ef_sig_dec (ef: AST.external_function) : option signature :=
+    match ef with
+    | AST.EF_external
+        nm
+        {| AST.sig_args := [xt]; AST.sig_res := AST.Xvoid; AST.sig_cc := {| AST.cc_vararg := None; AST.cc_unproto := false; AST.cc_structret := false |}; |} =>
+        match xtype_to_type xt with
+        | Some t => Some {| sig_args := [ t ]; sig_res := t_unit; |}
+        | None => None
+        end
+    | AST.EF_malloc => Some {| sig_args := [t_ofst]; sig_res := t_ptr; |}
+    | AST.EF_free => Some {| sig_args := [t_ptr]; sig_res := t_unit; |}
+    | _ => None
+    end.
+
+  Lemma ef_sig_dec_spec: forall ef sig, ext_funsig ef sig <-> ef_sig_dec ef = Some sig.
+  Proof.
+    intros.
+    split; intros SIG.
+    - destruct SIG; cbn.
+      + destruct t_arg, xt; cbn in H; try discriminate; try reflexivity.
+      + reflexivity.
+      + reflexivity.
+    - destruct ef; cbn in SIG; try discriminate.
+      destruct sg; try discriminate;
+        destruct sig_args0 as [| ? [ | ] ] ; try discriminate;
+        destruct sig_res0; try discriminate.
+      destruct sig_cc as [ [ | ] [ | ] [ | ] ]; try discriminate;
+        destruct x; try discriminate; cbn in SIG; inversion SIG; subst;
+        try discriminate;
+        (try (constructor; reflexivity)).
+      inversion SIG; subst; constructor.
+      inversion SIG; subst; constructor.
   Qed.
 
 End Facts.

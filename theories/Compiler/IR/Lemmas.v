@@ -10,37 +10,37 @@ From GallinaC.Compiler.IR Require Import Semantics Prog Typing.
 
 Section Pure.
 
-  Lemma eval_progress {ctx e t f env} (Hwt_expr: Expr.wt_expr ctx e t) (Hwt_env: wt_env f ctx env): exists v, eval e env = Some v /\ Value.wt_value v t.
+  Lemma eval_progress {ctx e t f env} (Hwt_expr: Expr.wt_expr ctx e t) (Hwt_env: wt_env f ctx env): { v & Value.wt_value v t & eval e env = Some v }.
   Proof.
     induction Hwt_expr; simpl;
-      (try (eexists; split; [ reflexivity | now repeat constructor ])).
-    - specialize (Hwt_env.(wv_ty_env) var_id t true Hget_env); cbn;
-        intros ( ( v & Eget_val_env & Hwt_val ) & HIn ).
-      exists v;
-        now rewrite Eget_val_env.
-    - destruct IHHwt_expr as ( v & Heval & Hwt_value ).
-      inversion Hwt_value; subst.
-      eexists; split; [ now rewrite Heval | now repeat constructor ].
-    - destruct IHHwt_expr1 as ( v1 & Heval1 & Hwt_value1 ).
-      destruct IHHwt_expr2 as ( v2 & Heval2 & Hwt_value2 ).
-      inversion Hwt_value1; subst.
-      inversion Hwt_value2; subst.
-      eexists; split; [ now rewrite Heval1, Heval2 | now repeat constructor ].
-    - destruct IHHwt_expr1 as ( v1 & Heval1 & Hwt_value1 ).
-      destruct IHHwt_expr2 as ( v2 & Heval2 & Hwt_value2 ).
-      inversion Hwt_value1; subst.
-      inversion Hwt_value2; subst.
-      eexists; split; [ now rewrite Heval1, Heval2 | repeat constructor ].
+      try (now (eexists; first [ now constructor | reflexivity ])).
+    - specialize (Hwt_env.(wv_ty_env) var_id t true GET); cbn;
+        intros ([ v GETval WTval] & IN).
+      exists v; [ assumption | now rewrite GETval ].
+    - destruct IHHwt_expr as [ v WTval EVAL ].
+      apply Facts.type_of_value_complete in WTval.
+      destruct v; try discriminate.
+      exists (v_bool (negb b0)); [ now repeat constructor | now rewrite EVAL ].
+    - destruct IHHwt_expr1 as [ v1 WTval1 EVAL1 ].
+      destruct IHHwt_expr2 as [ v2 WTval2 EVAL2 ].
+      apply Facts.type_of_value_complete in WTval1, WTval2.
+      destruct v1, v2; try discriminate.
+      now eexists; [ | rewrite EVAL1, EVAL2; reflexivity ]; constructor.
+    - destruct IHHwt_expr1 as [ v1 WTval1 EVAL1 ].
+      destruct IHHwt_expr2 as [ v2 WTval2 EVAL2 ].
+      apply Facts.type_of_value_complete in WTval1, WTval2.
+      destruct v1, v2; try discriminate.
+      now eexists; [ | rewrite EVAL1, EVAL2; reflexivity ]; constructor.
   Qed.
 
   Lemma eval_t_unit {ctx e f env} (Hwt_expr: Expr.wt_expr ctx e Types.t_unit) (Hwt_env: wt_env f ctx env): eval e env = Some Value.v_tt.
   Proof.
     remember Types.t_unit as t.
     induction Hwt_expr; try discriminate; subst; cbn; try reflexivity.
-    specialize (Hwt_env.(wv_ty_env) var_id Types.t_unit true Hget_env); cbn;
-      intros ( ( v & Hget_val_env & Hwt_val ) & HIn ).
-    inversion Hwt_val; subst.
-    now rewrite Hget_val_env.
+    specialize (Hwt_env.(wv_ty_env) var_id Types.t_unit true GET); cbn;
+      intros ( [ v GETval WTval ] & HIn ).
+    inversion WTval; subst.
+    now rewrite GETval.
   Qed.
 
   Lemma eval_v_tt
@@ -55,9 +55,9 @@ Section Pure.
       (try (simpl in Heval; congruence)).
     - cbn in Heval.
       destruct (Maps.PTree.get var_id env) as [ v | ] eqn:Eget_val_env; [ inversion Heval; subst; clear Heval | discriminate ].
-      specialize (Hwt_env.(wv_ty_env) var_id t true Hget_env) as ( (v & Eget_val_env' & Hwt_v ) & HIntemps).
+      specialize (Hwt_env.(wv_ty_env) var_id t true GET) as ( [ v GETval WTval ] & HIntemps).
       assert (v = Value.v_tt) by congruence; subst.
-      now inversion Hwt_v.
+      now inversion WTval.
     - simpl in Heval.
       destruct (eval _ _); (try (destruct v)); discriminate.
     - simpl in Heval.
@@ -72,7 +72,7 @@ Section Pure.
         destruct v; discriminate.
   Qed.
 
-  Lemma value_compcert_sized {St inj v tv} (INJ: @CCInj.inj_value St inj v tv): Value.sized v.
+  Lemma value_compcert_sized {St inj v tv} (INJ: @CCInj.InjValue St inj v tv): Value.sized v.
   Proof.
     inversion INJ; subst;
       now constructor.
@@ -124,17 +124,6 @@ Section Rewriting.
     split; auto.
   Qed.
 
-  Lemma xtype_of_type_inversion {A: Type} {t: Types.type} {a a_void a_other: A}:
-    match CCInj.type_to_xtype t with
-    | None (* void *) => a_void
-    | _ => a_other
-    end = a ->
-    (a = a_void /\ t = Types.t_unit) \/ (a = a_other /\ t <> Types.t_unit).
-  Proof.
-    destruct t; cbn; intros Heq; subst;
-      constructor; split; now auto.
-  Qed.
-
   Lemma seq_cont_target_fun {St} {k target1 target2}
     (Hseq_target1: @seq_cont_target St k target1)
     (Hseq_target2: @seq_cont_target St k target2)
@@ -176,8 +165,8 @@ Section Determinism.
   Lemma single_events (p: program): Smallstep.single_events (@semantics St Hp p).
   Proof using St Hp.
     unfold Smallstep.single_events; cbn;
-      intros s t s' Hstep.
-    inversion Hstep; subst; repeat constructor.
+      intros s t s' STEP.
+    inversion STEP; subst; repeat constructor.
   Qed.
 
   Lemma receptive (p: program): Smallstep.receptive (@semantics St Hp p).
@@ -185,7 +174,7 @@ Section Determinism.
     constructor.
     - intros s t1 s1 t2 Hstep1 Hmatch.
       inversion Hstep1; subst; inversion Hmatch; subst;
-        eexists; now eauto.
+        eexists; eassumption.
     - apply single_events.
   Qed.
 
@@ -193,7 +182,7 @@ Section Determinism.
   Proof using St Hp.
     constructor.
     - intros s ev1 t1 s1 ev2 Hstep Hmatch_traces.
-      inversion Hstep; subst.
+      inversion Hstep; subst; inversion X.
     - intros s t s' Hstep.
       inversion Hstep; now cbn.
   Qed.
@@ -213,8 +202,8 @@ Section Determinism.
       assert (v1 = v) by congruence; subst; clear EVAL0.
       assert (st'0 = st') by congruence; subst; clear MUTATE0.
       split; [ | now auto ].
-      destruct STORE as [ (SIZED & (v_cc & mc & STORE & TMC & INJ)) | (NSIZED & EQ) ],
-          STORE0 as [ (SIZED0 & (v_cc0 & mc0 & STORE0 & TMC0 & INJ0)) | (NSIZED0 & EQ0) ];
+      destruct STORE as [ ([ SIZED ] & (v_cc & mc & STORE & TMC & [ INJ ])) | (NSIZED & EQ) ],
+          STORE0 as [ ([ SIZED0 ] & (v_cc0 & mc0 & STORE0 & TMC0 & [ INJ0 ])) | (NSIZED0 & EQ0) ];
         [ clear WT0 | contradiction | contradiction | congruence ].
       assert (mc0 = mc) by congruence; subst; clear TMC0.
       specialize (value_compcert_fun INJ INJ0) as EQ; subst; clear INJ0.
@@ -239,8 +228,8 @@ Section Determinism.
     - assert (v_ptr0 = v_ptr) by congruence; subst; clear EVAL_ptr0.
       assert (v_data0 = v_data) by congruence; subst; clear EVAL_data0.
       assert (hp'0 = hp') by congruence; subst; clear MUTATE0.
-      destruct STORE as [ (SIZED & (v_ptr_b_cc & v_ptr_ofs_cc & v_data_cc & mc & STORE & TMC & INJptr & INJdata)) | (NSIZED & EQ) ],
-          STORE0 as [ (SIZED0 & (v_ptr_b_cc0 & v_ptr_ofs_cc0 & v_data_cc0 & mc0 & STORE0 & TMC0 & INJptr0 & INJdata0)) | (NSIZED0 & EQ0) ]; [ | contradiction | contradiction | now subst ].
+      destruct STORE as [ ([ SIZED ] & (v_ptr_b_cc & v_ptr_ofs_cc & v_data_cc & mc & STORE & TMC & [ INJptr ] & [ INJdata ])) | (NSIZED & EQ) ],
+          STORE0 as [ ([ SIZED0 ] & (v_ptr_b_cc0 & v_ptr_ofs_cc0 & v_data_cc0 & mc0 & STORE0 & TMC0 & [ INJptr0 ] & [ INJdata0 ])) | (NSIZED0 & EQ0) ]; [ | contradiction | contradiction | now subst ].
       specialize (value_compcert_fun INJptr INJptr0) as EQ; inversion EQ; subst; clear EQ.
       specialize (value_compcert_fun INJdata INJdata0) as EQ; subst.
       clear WT0 INJptr0 INJdata0.
@@ -253,7 +242,7 @@ Section Determinism.
       assert (hp'0 = hp') by congruence; subst; clear FREE_GC0.
       specialize (value_compcert_fun INJ INJ0) as EQ; inversion EQ; subst; clear EQ INJ0.
       assert (m'0 = m') by congruence; subst; clear FREE_CC0.
-      now auto.
+ auto.
     - assert (v_ptr0 = v_ptr) by congruence; subst.
       assert (v_shift0 = v_shift) by congruence; subst.
       specialize (Pointer.Pointer.Shift_fw_fun _ _ _ _ SHIFT SHIFT0) as EQ; subst.
@@ -310,7 +299,7 @@ Section WT.
 
   Lemma inj_has_argtype {St inj v tv t tt}
     (WT: wt_value v t)
-    (INJ: @CCInj.inj_value St inj v tv)
+    (INJ: @CCInj.InjValue St inj v tv)
     (XT: type_to_xtype t = Some tt)
     : Values.Val.has_argtype tv tt.
   Proof.
@@ -545,21 +534,22 @@ Section Preservation.
     (BUILTIN: @builtin St Hp c ge env locals sp s m inj v s' m' inj')
     : Value.wt_value v t.
   Proof.
-    inversion Hwt_state; subst;
-      inversion State_wt_cmd; subst;
+    inversion Hwt_state; subst.
+    inversion State_wt_cmd as [ WTcmd ].
+    inversion WTcmd; subst;
       inversion BUILTIN; subst;
-      (try (assumption));
-      (try (now constructor)).
+      try (assumption);
+      try (now constructor).
   Qed.
 
   Lemma mutate_store_wf_inj {St Hp s m inj nm v s' typ v_ptr_b_cc v_ptr_ofs_cc m'}
     (WF: @CCInj.wf St Hp s m inj)
     (MUT: Store.mutate (Primitives.store s) nm v = Some s')
-    (CC: Types.sized typ /\
+    (CC: inhabited (Types.sized typ) /\
            (exists v_cc (mc : AST.memory_chunk),
                Memory.Mem.store mc m v_ptr_b_cc v_ptr_ofs_cc v_cc = Some m' /\
-                 type_mem_chunk typ = Some mc /\ CCInj.inj_value inj (Value.value_of_memval v) v_cc) \/
-           ~ Types.sized typ /\ m' = m)
+                 type_mem_chunk typ = Some mc /\ CCInj.InjValue inj (Value.value_of_memval v) v_cc) \/
+           (notT (Types.sized typ) /\ m' = m))
         : CCInj.wf (Primitives.mkState s' (Primitives.heap s)) m' inj.
   Proof.
     constructor;
@@ -680,32 +670,6 @@ Section Progress.
   Lemma step_progress {prog} S1 ge (Hwt_state: @wt_state St Hp prog S1):
     (exists t S2, Semantics.step ge S1 t S2) \/ (exists i, final_state S1 i).
   Proof.
-    inversion Hwt_state; subst;
-      (try (inversion Hwt_State; subst)).
-    - left.
-      exists Events.E0.
-      inversion State_wt_cmd; subst.
-      + destruct (eval_progress Hwt_expr State_wt_env) as (v & Heval & Hwt_value ).
-        inversion State_wt_cont as [ | | | ?ctx ?k ?tret [ | ] ]; subst.
-        * eexists ?[S2].
-          eapply step_builtin_seq_cont.
-          econstructor.
-          econstructor.
-          econstructor; eauto.
-        * admit.
-        * inversion Hwt_value; subst.
-          eexists ?[S2].
-          constructor.
-          constructor.
-          constructor.
-          now constructor.
-        * eexists ?[S2].
-          eapply step_builtin_call_cont.
-          constructor.
-          econstructor; now eauto.
-          unfold pop_stack.
-  (* TODO inject_cc and wf_inject_cc don't provide enough
-     to guarantee that this free succeeds *)
   Abort.
 
 End Progress.

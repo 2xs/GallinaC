@@ -11,7 +11,7 @@ From GallinaC.Compiler.IR Require Import Cmd Prog.
 
 (* TODO find a way to guarantee have a somewhat usable progress implied by wt_cmd *)
 (* TODO previous effort added an output context, but failed at the if *)
-Inductive wt_cmd: ctxt (type * bool) Empty_set fundef vardef -> cmd -> type -> Prop :=
+Inductive wt_cmd: ctxt (type * bool) unit fundef vardef -> cmd -> type -> Type :=
 | wt_ret : forall ty_ctxt e t
                   (Hwt_expr: wt_expr ty_ctxt.(ctxt_pure) e t),
     wt_cmd ty_ctxt (c_ret e t) t
@@ -58,7 +58,7 @@ Inductive wt_cmd: ctxt (type * bool) Empty_set fundef vardef -> cmd -> type -> P
     (Hfind_fn: Ctxt.get_global f_id ty_ctxt = Some (AST.Gfun (AST.Internal fn)))
     (Hreturn_ground: ground fn.(fn_return))
     (Et_args: List.map snd fn.(fn_params) = List.map snd args)
-    (WT_args: List.Forall2 (wt_expr ty_ctxt) (List.map fst args) (List.map snd args)),
+    (WT_args: Forall2T (wt_expr ty_ctxt) (List.map fst args) (List.map snd args)),
     wt_cmd ty_ctxt (c_app f_id fn.(fn_return) args) fn.(fn_return)
 .
 

@@ -72,31 +72,29 @@ Proof.
 Qed.
 Hint Resolve type_eqb_neq: deep_gallinac.
 
-Inductive ground: type -> Prop :=
+Inductive ground: type -> Type :=
 | ground_unit: ground t_unit
 | ground_bool: ground t_bool
 | ground_nat : ground t_nat
 | ground_ofst: ground t_ofst
 | ground_ptr : ground t_ptr
 .
+Hint Constructors ground: deep_gallinac.
 
-Inductive nonground: type -> Prop :=
+Inductive nonground: type -> Type :=
 | nonground_t_fun: forall ti to, nonground (t_fun ti to)
 .
+Hint Constructors nonground: deep_gallinac.
 
-Inductive sized: type -> Prop :=
+Inductive sized: type -> Type :=
 | sized_bool: sized t_bool
 | sized_nat: sized t_nat
 | sized_ofst: sized t_ofst
 | sized_ptr: sized t_ptr
 .
+Hint Constructors sized: deep_gallinac.
 
-Definition ground_dec (t : type) : {ground t} + {~ground t}.
-Proof.
-  destruct t; now repeat constructor.
-Defined.
-
-Definition nonground_dec (t: type): {nonground t} + {~nonground t}.
+Definition ground_dec_total (t : type) : (ground t) + (nonground t).
 Proof.
   destruct t; now repeat constructor.
 Defined.
@@ -110,12 +108,7 @@ Proof.
 Qed.
 Hint Resolve ground_nonground_exclude: deep_gallinac.
 
-Lemma ground_nonground_total: forall t, ground t \/ nonground t.
-Proof.
-  induction t; now repeat constructor.
-Qed.
-
-Lemma sized_dec: forall t, { sized t } + { ~sized t }.
+Lemma sized_dec_total: forall t, (sized t) + (sized t -> Empty_set).
 Proof.
   destruct t; now repeat constructor.
 Qed.

@@ -44,13 +44,13 @@ Inductive memval_mem_chunk: memval -> AST.memory_chunk -> Prop :=
 | vmchunk_ptr: forall p, memval_mem_chunk (VPtr p) AST.Mptr
 .
 
-Inductive inj_value {St} (inj: @injection St): value -> Values.val -> Prop :=
+Inductive InjValue {St} (inj: @injection St): value -> Values.val -> Prop :=
 | inj_bool: forall b,
-    inj_value inj (v_bool b) (if b then Values.Vtrue else Values.Vfalse)
+    InjValue inj (v_bool b) (if b then Values.Vtrue else Values.Vfalse)
 | inj_nat: forall (n: nat) i
                   (HBounded: Intops.Unsigned.Bounded n)
                   (Heq: Int.unsigned i = Z.of_nat n),
-    inj_value inj (v_nat n) (Values.Vint i)
+    InjValue inj (v_nat n) (Values.Vint i)
 | inj_ofst: forall (n: N) v
                    (HBounded: Intops.Unsigned.Bounded n)
                    (Heq:
@@ -58,14 +58,36 @@ Inductive inj_value {St} (inj: @injection St): value -> Values.val -> Prop :=
                      | true => exists i, Int64.unsigned i = Z.of_N n /\ v = Values.Vlong i
                      | false => exists i, Int.unsigned i = Z.of_N n /\ v = Values.Vint i
                      end),
-    inj_value inj (v_ofst n) v
+    InjValue inj (v_ofst n) v
 | inj_ptr_live: forall b o prov b' o',
     ListExt.BindIn b b' inj.(inj_hp_map) ->
     (0 <= (Z.of_N o) < Ptrofs.max_signed)%Z ->
     Ptrofs.signed o' = Z.of_N o ->
-    inj_value inj (v_ptr (Some (Addr.mkAddr b o, prov))) (Values.Vptr b' o')
-| inj_ptr_null: inj_value inj (v_ptr None) (Values.Vnullptr)
+    InjValue inj (v_ptr (Some (Addr.mkAddr b o, prov))) (Values.Vptr b' o')
+| inj_ptr_null: InjValue inj (v_ptr None) (Values.Vnullptr)
 .
+
+Definition inj_value {St} (inj: @injection St) (v: value): option Values.val :=
+  match v with
+  | v_bool b => if b then Some Values.Vtrue else Some Values.Vfalse
+  | v_tt => None
+  | v_nat n =>
+      if (IntCarrier.to_Z n <=? Unsigned.max_unsigned nat_uint32_t)%Z then
+        Some (Values.Vint (Int.repr (IntCarrier.to_Z n)))
+      else
+        None
+  | v_ofst o =>
+      if (IntCarrier.to_Z o <=? Unsigned.max_unsigned n_ofst_t)%Z then
+        match Archi.ptr64 with
+        | true => Some (Values.Vlong (Int64.repr (IntCarrier.to_Z o)))
+        | false => Some (Values.Vint (Int.repr (IntCarrier.to_Z o)))
+        end
+      else
+        None
+  | v_ptr None => Some (Values.Vnullptr)
+  | v_ptr (Some ({| Addr.block := b; Addr.offset := o |}, prov)) =>
+      None
+  end.
 
 Definition memval_memsize: nat :=
   (Nat.max (Memdata.size_chunk_nat AST.Mptr)
@@ -90,7 +112,7 @@ Record wf {St: Store} {Hp: Heap}
         (Addr.mkAddr b (N.of_nat o)) |-> v $<= s.(Primitives.heap) ->
         exists b' v' mc,
           memval_mem_chunk v mc
-          /\ inj_value inj (Value.value_of_memval v) v'
+          /\ inhabited (InjValue inj (Value.value_of_memval v) v')
           /\ (forall o',
                  o' < Memdata.size_quantity_nat (Memdata.quantity_chunk mc) ->
                  ZMap.get (Z.of_nat (o + o')) (PMap.get b' (Mem.mem_contents m)) = Memdata.Fragment v' (Memdata.quantity_chunk mc) o /\
@@ -103,7 +125,7 @@ Record wf {St: Store} {Hp: Heap}
         exists b o mc v' freeable,
           In (nm, (b, o, freeable)) inj.(inj_st_map)
           /\ memval_mem_chunk v mc
-          /\ inj_value inj (Value.value_of_memval v) v'
+          /\ inhabited (InjValue inj (Value.value_of_memval v) v')
           /\ (forall o',
                  o' < Memdata.size_quantity_nat (Memdata.quantity_chunk mc) ->
                  ZMap.get (Ptrofs.unsigned (Ptrofs.add (Ptrofs.repr (Z.of_nat o)) (Ptrofs.repr (Z.of_nat o')))) (PMap.get b (Mem.mem_contents m)) = Memdata.Fragment v' (Memdata.quantity_chunk mc) o' /\
@@ -130,12 +152,12 @@ Arguments mem_perm_of_store [St Hp s m inj].
 
 Definition type_to_xtype (t: type): option AST.xtype :=
   match t with
-  | t_unit => None (* AST.Xvoid *)
+  | t_unit => Some AST.Xvoid
   | t_bool => Some AST.Xbool
   | t_nat => Some AST.Xint
   | t_ofst => Some AST.Xsize_t
   | t_ptr => Some AST.Xptr
-  | t_fun _ _ => Some AST.Xptr
+  | t_fun _ _ => None
   end.
 
 Definition xtype_to_type (t: AST.xtype): option type :=
@@ -144,11 +166,11 @@ Definition xtype_to_type (t: AST.xtype): option type :=
   | AST.Xint => Some t_nat
   | AST.Xptr => Some t_ptr
   | AST.Xvoid => Some t_unit
+  | AST.Xlong => if Archi.ptr64 then Some t_ofst else None
   | AST.Xint8signed | AST.Xint8unsigned
   | AST.Xint16signed | AST.Xint16unsigned
   | AST.Xfloat | AST.Xsingle
   | AST.Xany32 | AST.Xany64
-  | AST.Xlong
     => None
   end.
 
@@ -157,6 +179,7 @@ Inductive type_of_xtype: AST.xtype -> type -> Prop :=
 | tox_int: type_of_xtype AST.Xint t_nat
 | tox_ptr: type_of_xtype AST.Xptr t_ptr
 | tox_void: type_of_xtype AST.Xvoid t_unit
+| tox_long: (Archi.ptr64 = true) -> type_of_xtype AST.Xlong t_ofst
 .
 
 Definition offset_to_offset (offset: Z): Z := (offset * Z.of_nat memval_memsize).
@@ -180,7 +203,7 @@ Module Facts.
   Qed.
 
   Lemma value_compcert_fun [St inj v_gc v_cc v_cc']:
-    @inj_value St inj v_gc v_cc -> inj_value inj v_gc v_cc' -> v_cc' = v_cc.
+    @InjValue St inj v_gc v_cc -> InjValue inj v_gc v_cc' -> v_cc' = v_cc.
   Proof.
     intros H H'.
     inversion H as [ ?b1 | ?n1 ?i1 ?Hle1 ?Hunsigned1 | | ?b1 ?o1 ?prov1 ?b'1 ?o'1 ?HIn1 ?Hrange1 ?Hsigned1 | ];
@@ -217,9 +240,9 @@ Module Facts.
   Hint Rewrite value_compcert_fun: deep_gallinac.
 
   Lemma value_compcert_nat_eq [St inj l r l_i r_i valid_pointer]
-    (Hv_cc_l: inj_value inj (v_nat l) (Values.Vint l_i))
-    (Hv_cc_r: inj_value inj (v_nat r) (Values.Vint r_i)):
-    @inj_value St inj
+    (Hv_cc_l: InjValue inj (v_nat l) (Values.Vint l_i))
+    (Hv_cc_r: InjValue inj (v_nat r) (Values.Vint r_i)):
+    @InjValue St inj
       (v_bool (l =? r)%nat)
       (Values.Val.cmpu valid_pointer Ceq (Values.Vint l_i) (Values.Vint r_i)).
   Proof.
@@ -265,7 +288,7 @@ Module Facts.
   Hint Resolve store_memsize_bounded: deep_gallinac.
 
   Lemma inj_bool_val {St inj b tv}
-    (Hinj : @inj_value St inj (v_bool b) tv)
+    (Hinj : @InjValue St inj (v_bool b) tv)
     : Values.Val.bool_of_val tv b.
   Proof.
     inversion Hinj; subst; destruct b; constructor.

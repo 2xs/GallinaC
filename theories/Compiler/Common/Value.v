@@ -11,7 +11,7 @@ Inductive value :=
 | v_ptr  : Pointer.t -> value
 .
 
-Inductive sized: value -> Prop :=
+Inductive sized: value -> Set :=
 | sized_bool: forall b, sized (v_bool b)
 | sized_nat: forall n, sized (v_nat n)
 | sized_ofst: forall n, sized (v_ofst n)
@@ -26,6 +26,14 @@ Inductive value_memval: value -> memval -> Prop :=
 | value_memval_ptr: forall p, value_memval (v_ptr p) (VPtr p)
 .
 
+(* Inductive wt_valueT: value -> type -> Set := *)
+(* | wt_vT_tt: wt_valueT v_tt t_unit *)
+(* | wt_vT_bool: forall b, wt_valueT (v_bool b) t_bool *)
+(* | wt_vT_nat: forall n, wt_valueT (v_nat n) t_nat *)
+(* | wt_vT_ofst: forall n, wt_valueT (v_ofst n) t_ofst *)
+(* | wt_vT_ptr: forall p, wt_valueT (v_ptr p) t_ptr *)
+(* . *)
+
 Inductive wt_value: value -> type -> Prop :=
 | wt_v_tt: wt_value v_tt t_unit
 | wt_v_bool: forall b, wt_value (v_bool b) t_bool
@@ -33,6 +41,15 @@ Inductive wt_value: value -> type -> Prop :=
 | wt_v_ofst: forall n, wt_value (v_ofst n) t_ofst
 | wt_v_ptr: forall p, wt_value (v_ptr p) t_ptr
 .
+
+Definition type_of_value (v: value): type :=
+  match v with
+  | v_tt => t_unit
+  | v_bool _ => t_bool
+  | v_nat _ => t_nat
+  | v_ofst _ => t_ofst
+  | v_ptr _ => t_ptr
+  end.
 
 Definition value_of_memval (v: memval): value :=
   match v with
@@ -94,12 +111,22 @@ Module Facts.
   Hint Resolve value_memval_fun_r: deep_gallinac.
   Hint Rewrite value_memval_fun_r: deep_gallinac.
 
-  Lemma sized_or_unit_dec: forall v, { sized v /\ v <> v_tt } + { v = v_tt }.
+  Lemma sized_or_unit_dec: forall v, (sized v * (v <> v_tt))%type + { v = v_tt }.
   Proof.
     destruct v;
       (try now constructor);
       left; (split; [ constructor | discriminate ]).
     Qed.
+
+  Lemma type_of_value_correct: forall {v}, wt_value v (type_of_value v).
+  Proof.
+    now destruct v; constructor.
+  Qed.
+
+  Lemma type_of_value_complete: forall {v t}, wt_value v t -> type_of_value v = t.
+  Proof.
+    now destruct 1.
+  Qed.
 
   Lemma wt_value_fun: forall {v t1 t2}, wt_value v t1 -> wt_value v t2 -> t2 = t1.
   Proof.
@@ -112,7 +139,8 @@ Module Facts.
 
   Lemma wt_value_sized v t (WT: wt_value v t) (SIZED: Value.sized v): Types.sized t.
   Proof.
-    destruct WT; inversion SIZED; constructor.
+    apply type_of_value_complete in WT.
+    destruct v; inversion SIZED; cbn in WT; subst; constructor.
   Qed.
   #[global] Hint Resolve wt_value_sized: deep_gallinac.
 

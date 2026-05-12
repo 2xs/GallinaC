@@ -2,6 +2,28 @@ From Stdlib Require Import Arith Psatz.
 From Stdlib Require Export List SetoidList.
 Export ListNotations.
 
+From compcert.lib Require Coqlib.
+
+Lemma cons_self_neq [A] [l] [a: A] (EQ: a::l = l): False.
+  revert a EQ.
+  induction l; cbn; intros.
+  discriminate.
+  inversion EQ.
+  eapply IHl, H1.
+Qed.
+
+Lemma In_neq_hd [A] [l: list A] [a a'] (IN: In a (a'::l)) (NE: a <> a'): In a l.
+Proof.
+  destruct IN; congruence.
+Qed.
+
+Lemma InA_In [A: Type] (a: A) l: InA eq a l <-> In a l.
+Proof.
+  induction l as [ | a' l];
+    split; intros H; inversion H; subst;
+    first [ now left | now right; apply IHl ].
+Qed.
+
 Lemma map_In_inj {A B: Type} {f: A -> B} {l: list A} {a}
   (f_inj: forall a1 a2, f a1 = f a2 -> a1 = a2)
   (HIn: In (f a) (map f l))
@@ -96,6 +118,17 @@ Proof.
   inversion HIn; subst; now auto.
 Qed.
 
+Lemma AbsIn_not_In {A: Type} (l: list A): forall a, AbsIn a l <-> ~In a l.
+Proof.
+  induction l; [ now intros; split; intros H; auto; constructor  | intros; split; intros H ].
+  - intros contra.
+    inversion H; subst.
+    eapply IHl; [ eauto | destruct contra; [ congruence | assumption ] ].
+  - constructor; [ | apply IHl ];
+      intros contra; subst;
+      now apply H; now constructor.
+Qed.
+
 Lemma SIns_tl_neq {A: Type}: forall (l: list A) a a', SIns (a::l) -> In a' l -> a' <> a.
 Proof.
   induction l as [ | a l ]; [ cbn; intros; contradiction | ].
@@ -150,6 +183,23 @@ Proof.
   destruct HIn as [ Heq | ]; [ inversion Heq; subst; contradiction | auto ].
 Qed.
 
+Lemma NoDup_map_fst_AbsBind [A B: Type] [l: list (A*B)] [a b] (NODUP: NoDup (map fst ((a,b)::l))): AbsBind a l.
+Proof.
+  induction l as [ | [ a' b' ] l ]; [ constructor | right ].
+  - inversion NODUP; subst.
+    intros contra; subst a'; apply H1.
+    now left.
+  - apply IHl.
+    cbn in *.
+    constructor.
+    + intros contra.
+      inversion NODUP; subst.
+      apply H1.
+      now right.
+    + inversion NODUP; subst.
+      now inversion H2; subst.
+Qed.
+
 Lemma SBinds_same_In_eq
   {A B: Type} {a b1 b2} {l: list (A*B)}
   (HSBinds: SBinds l)
@@ -184,20 +234,29 @@ Proof.
 Qed.
 Hint Resolve SBinds_In: datatypes.
 
-Lemma SBinds_NoDupA {A B: Type} {l: list (A*B)}: SBinds l -> SetoidList.NoDupA Logic.eq l.
+Lemma SBinds_In_tl [A B: Type] [l: list (A * B)] [a b b'] (SBINDS: SBinds ((a,b)::l)) (IN: In (a, b') ((a, b)::l)): b' = b.
 Proof.
-  intros HSBinds.
-  induction HSBinds as [ | a b l HAbsBind HSBinds ]; constructor; auto.
-  intro contra.
-  revert a b HAbsBind contra.
-  induction l as [ | [ a' b' ] l ]; intros.
-  inversion contra.
-  inversion HAbsBind; subst.
-  inversion contra as [ [ ?a' ?b' ] ?l ?Heq | [ ?a' ?b' ] ?l ?HInA' ]; subst.
-  now inversion Heq.
-  eapply IHl; eauto.
-  now inversion HSBinds.
-  now inversion IHHSBinds.
+  inversion SBINDS; subst; inversion IN; subst.
+  congruence.
+  exfalso; eapply AbsBind_In_False; eauto.
+Qed.
+
+Lemma NoDup_SBinds [A B: Type] [l: list (A * B)] (NODUP: NoDup (map fst l)): SBinds l.
+Proof.
+  induction l as [ | [ a b ] l ]; constructor.
+  - eapply NoDup_map_fst_AbsBind; apply NODUP.
+  - inversion NODUP; subst.
+    now apply IHl.
+Qed.
+
+Lemma SIns_NoDupA {A: Type} {l: list A}: SIns l <-> SetoidList.NoDupA Logic.eq l.
+Proof.
+  induction l as [ | a l ]; [ split; intros; constructor | ].
+  split; intros H; inversion H; subst.
+  all: constructor; [ | now apply IHl ].
+  now intros contra; eapply AbsIn_In_contra; [ eauto | apply InA_In; eauto ].
+  now apply AbsIn_not_In;
+    intros contra; apply H2, InA_In.
 Qed.
 
 Lemma AbsBind_AbsIn {A B: Type} {l: list (A*B)} {a b} (Abs: AbsBind a l): AbsIn (a,b) l.
@@ -420,6 +479,11 @@ Lemma Forall_forall_l [A: Type] [P: A -> Prop] [l: list A] (HForall: Forall P l)
 Proof.
   now apply Forall_forall.
 Qed.
+
+Inductive ForallT [A: Type] (P: A -> Type): list A -> Prop :=
+| ForallT_nil : ForallT P []
+| ForallT_cons: forall (x: A) (l: list A), P x -> ForallT P l -> ForallT P (x::l)
+.
 
 Lemma Forall2_dec: forall [A B: Type] (P: A -> B -> Prop),
     (forall x y, { P x y } + { ~P x y}) ->
@@ -653,17 +717,35 @@ Proof.
   now split.
 Qed.
 
-Lemma InA_In [A: Type] (a: A) l (IN: InA eq a l): In a l.
+Lemma NoDupA_NoDup [A: Type] (l: list A): NoDupA eq l <-> NoDup l.
 Proof.
-  induction l as [ | a' l]; [inversion IN | ].
-  now inversion IN; subst; [ left | right; eauto ].
+  induction l; [ repeat constructor | ].
+  split; intros H;
+    inversion H; subst;
+    (constructor; [ | now apply IHl ]).
+  now rewrite InA_In in H2.
+  now rewrite <- InA_In in H2.
 Qed.
 
-Lemma NoDupA_NoDup [A: Type] (l: list A) (ND: NoDupA eq l): NoDup l.
+Lemma list_no_repet_NoDup [A: Type] (l: list A): Coqlib.list_norepet l <-> NoDup l.
 Proof.
-  induction l; constructor.
-  inversion ND; subst.
-  intros contra.
-  apply H1, In_InA; eauto using eq_equivalence.
-  now apply IHl; inversion ND; subst.
+  induction l.
+  - split; constructor.
+  - split; intros H;
+      inversion H; subst;
+      (constructor; [ assumption | now apply IHl ]).
+Qed.
+
+Lemma rev_list_rect [A: Type] : forall P:list A-> Type,
+    P [] ->
+    (forall (a:A) (l:list A), P (rev l) -> P (rev (a :: l))) ->
+    forall l:list A, P (rev l).
+Proof.
+  intros P ? ? l; induction l; auto.
+Qed.
+
+Lemma rev_rect [A: Type] (P: list A -> Type) (Pnil: P []) (Pcons: forall (x: A) (l: list A), P l -> P (l ++ [x])) l: P l.
+Proof.
+  rewrite <- (rev_involutive l).
+  apply (rev_list_rect P); cbn; auto.
 Qed.
