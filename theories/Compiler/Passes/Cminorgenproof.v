@@ -71,7 +71,7 @@ Section Match.
   Qed.
 
   Definition match_temps {St} inj (env: Semantics.env) (tenv: Cminor.env): Prop :=
-    forall id v, Maps.PTree.get id env = Some v -> v = Value.v_tt \/ exists v', Maps.PTree.get id tenv = Some v' /\ inhabited (@CCInj.inj_value St inj v v').
+    forall id v, Maps.PTree.get id env = Some v -> v = Value.v_tt \/ exists v', Maps.PTree.get id tenv = Some v' /\ @CCInj.InjValue St inj v v'.
 
   Inductive match_cont {St} (prog: Prog.program) (inj: @CCInj.injection St): compilenv -> @Semantics.cont St -> Cminor.cont -> Prop :=
   | match_cont_Kbind_Kseq: forall {cenv id_b c k tc tk}
@@ -131,7 +131,7 @@ Section Match.
   | MARGS_unit: forall v_args tv_args (MARGS: match_args inj v_args tv_args), match_args inj (Value.v_tt::v_args) tv_args
   | MARGS_sized: forall v_arg tv_arg v_args tv_args
                         (MARGS: match_args inj v_args tv_args)
-                        (Hinj: CCInj.inj_value inj v_arg tv_arg),
+                        (Hinj: CCInj.InjValue inj v_arg tv_arg),
       match_args inj (v_arg::v_args) (tv_arg::tv_args)
   .
 
@@ -158,7 +158,7 @@ Section Match.
   | match_returnstate:
     forall r k m s inj tr tk cenv
            (WT: Semantics.wt_state p (Semantics.Returnstate r k s m inj))
-           (MRET: r = Value.v_tt \/ inhabited (CCInj.inj_value inj r tr))
+           (MRET: r = Value.v_tt \/ CCInj.InjValue inj r tr)
            (MK: match_cont p inj cenv k tk),
       match_states p (Semantics.Returnstate r k s m inj)
         (Cminor.Returnstate tr tk m)
@@ -235,7 +235,7 @@ Section EXPRESSIONS_HELPER.
     (MCENV: match_cenv cenv ctx)
     (Hmatch_temps: match_temps inj env tenv)
     (Heval: Semantics.eval e env = Some v):
-    exists tv, (forall tge sp m, Cminor.eval_expr tge sp tenv m e' tv) /\ inhabited (@CCInj.inj_value St inj v tv).
+    exists tv, (forall tge sp m, Cminor.eval_expr tge sp tenv m e' tv) /\ @CCInj.InjValue St inj v tv.
   Proof.
     revert e' mc v Htransl_sized Heval.
     induction Hwt_expr; simpl; intros.
@@ -274,14 +274,14 @@ Section EXPRESSIONS_HELPER.
       exists (Values.Vint (Int.repr (Z.of_nat n))).
       split.
       now constructor.
-      constructor; constructor.
+      constructor.
       exact BOUNDED.
       apply Int.unsigned_repr.
       eauto with ints.
     - inversion Htransl_sized; subst; clear Htransl_sized.
       inversion Heval; subst.
       destruct (Archi.ptr64) eqn:Earchi;
-        eexists; (split; [ unfold make_size_t; rewrite Earchi; now constructor | constructor; constructor; [ assumption | rewrite Earchi ] ]).
+        eexists; (split; [ unfold make_size_t; rewrite Earchi; now constructor | constructor; [ assumption | rewrite Earchi ] ]).
       specialize (Unsigned.CompCert.Ptrofs.unsigned_range_cc_64 (UInt := n_ofst_t) eq_refl Earchi) as RANGE; eexists; split; [ | eauto ]; now apply Int64.unsigned_repr, RANGE.
       specialize (Unsigned.CompCert.Ptrofs.unsigned_range_cc_32 (UInt := n_ofst_t) eq_refl Earchi) as RANGE; eexists; split; [ | eauto ]; now apply Int.unsigned_repr, RANGE.
     - inversion Htransl_sized; subst.
@@ -368,7 +368,7 @@ Section EXPRESSIONS_HELPER.
       split; [ econstructor; [ eauto | eauto | eauto ] | ].
       inversion Hinj_tv_l; subst.
       inversion Hinj_tv_r; subst.
-      now eapply CCInj.Facts.value_compcert_nat_eq.
+      now eapply CCInj.Facts.InjValue_nat_eq.
   Qed.
 
   Lemma transl_expr_maybe_sized_sized {cenv e t te mc}
@@ -397,7 +397,7 @@ Section EXPRESSIONS_HELPER.
     - cbn in Htransl.
       destruct (SetoidList.findA (Pos.eqb var_id) (temps cenv)) eqn:EfindA; [ | discriminate ].
       destruct (Types.type_eqb_spec t0 t); [ subst | discriminate ].
-      destruct t; cbn in Htransl; try discriminate; try (now inversion Hground).
+      destruct t; cbn in Htransl; try discriminate; try (now inversion GROUND).
       split; [ reflexivity | right; now eexists ].
     - split; [ reflexivity | now left ].
     - cbn in Htransl.
@@ -420,7 +420,7 @@ Section EXPRESSIONS_HELPER.
 
   Lemma transl_args_correct
     {St te args ctx cenv t_args f e inj v_args}
-    (WT_args: List.Forall2 (Expr.wt_expr ctx) (map fst args) (map snd args))
+    (WT_args: ListExt.Forall2T (Expr.wt_expr ctx) (map fst args) (map snd args))
     (WT_env: Semantics.wt_env f ctx e)
     (MCENV: match_cenv cenv ctx)
     (MTEMPS: @match_temps St inj e te)
@@ -499,7 +499,7 @@ Section TRANSLATION_HELPER.
     {St Hp sp} {f: function} {s m inj s' m' inj'}
     (WF_inj: CCInj.wf s m inj)
     (Hpop_stack: @Semantics.pop_stack St Hp sp f.(fn_extra).(fn_stackspace) s m inj = Some (s', m', inj'))
-    : forall v tv, CCInj.inj_value inj v tv -> CCInj.inj_value inj' v tv.
+    : forall v tv, CCInj.InjValue inj v tv -> CCInj.InjValue inj' v tv.
   Proof.
     simpl_pop_stack.
     intros v tv Hinj.
@@ -595,7 +595,7 @@ Section TRANSLATION_HELPER.
     now inversion Hcall_cont.
   Qed.
 
-  Lemma match_args_impl {St inj1 inj2} (inj_impl: forall v tv, @CCInj.inj_value St inj1 v tv -> CCInj.inj_value inj2 v tv): forall args targs (MARGS: match_args inj1 args targs), @match_args St inj2 args targs.
+  Lemma match_args_impl {St inj1 inj2} (inj_impl: forall v tv, @CCInj.InjValue St inj1 v tv -> CCInj.InjValue inj2 v tv): forall args targs (MARGS: match_args inj1 args targs), @match_args St inj2 args targs.
   Proof.
     intros; induction MARGS;
       constructor; auto.
@@ -689,7 +689,7 @@ Section TRANSLATION_HELPER.
           | Types.t_unit => optid = None
           | _ => optid = Some target_id
           end)
-    (INJ: CCInj.inj_value inj v tv \/ v = Value.v_tt)
+    (INJ: CCInj.InjValue inj v tv \/ v = Value.v_tt)
     (WT: Value.wt_value v t)
     : @match_temps St inj (PTree.set target_id v env) (Cminor.set_optvar optid tv te).
   Proof.
@@ -964,45 +964,55 @@ Section TRANSLATION.
     now eapply sig_preserved_external.
   Qed.
 
-  Lemma transl_initial_states:
-    forall S, Semantics.initial_state prog S ->
-              exists R, Cminor.initial_state tprog R /\ @match_states St Hp prog S R.
+  Lemma transl_initial_states [S] (INIT: Semantics.initial_state prog S)
+    : exists R, Cminor.initial_state tprog R /\ @match_states St Hp prog S R.
   Proof using TRANSL.
-    intros S Hinit.
-    destruct Hinit as [ ?ge ?b ?f ?s0 ?m0 ?inj_0 Hwt_prog Hge Hinit_state Hwf_inject Hfind_symbol Hfind_funct_ptr Hfunsig ]; subst.
-    destruct (function_ptr_translated TRANSL Hfind_funct_ptr) as ( cu & tf & Hfind_funct_ptr' & Hmatch_fundef & Hlo ).
+    destruct INIT as [ ge b fd s0 m0 inj0 WTprog GE INITstate INJ FINDsymbol FINDfunct_ptr FUNSIG ];
+      subst.
+    destruct (function_ptr_translated TRANSL FINDfunct_ptr) as ( cu & tf & FINDfunct_ptr' & MATCHfd & LINK ).
     exists (Cminor.Callstate tf [] Cminor.Kstop m0).
     split.
     - eapply Cminor.initial_state_intro with (b := b).
-      + apply (Genv.init_mem_match TRANSL); eauto.
-        eapply Lemmas.init_state_correct_mem; eauto.
-      + rewrite (match_program_main TRANSL ).
-        now rewrite (symbols_preserved TRANSL).
-      + exact Hfind_funct_ptr'.
-      + rewrite Lemmas.signature_main.
-        eapply sig_preserved_match; eauto.
-    - inversion Hwt_prog; subst.
+      + eapply (Genv.init_mem_match TRANSL), Lemmas.init_state_correct_mem; eassumption.
+      + now rewrite (match_program_main TRANSL), (symbols_preserved TRANSL).
+      + exact FINDfunct_ptr'.
+      + rewrite Lemmas.signature_main;
+          eapply sig_preserved_match; eassumption.
+    - destruct WTprog as [ WTdefs INpublic [fd_main INmain] SBINDSdefs SORTEDpublic [ INmalloc INfree ] ].
+      specialize (proj1 (Forall_forall _ _) WTdefs _ INmain) as WTmain;
+        cbn in WTmain.
+      inversion WTmain as [ ?ctx ?id ?f WTfmain | ]; subst.
+      assert (fd = fd_main).
+      {
+        assert (FINDdef : Genv.find_def (Genv.globalenv prog) b = Some (AST.Gfun fd))
+          by
+          (unfold Genv.find_funct_ptr in FINDfunct_ptr;
+           destruct (Genv.find_def (Genv.globalenv prog) b) as [[f|]|];
+           congruence).
+        assert (DEFMAPfd : (AST.prog_defmap prog) ! (prog_main prog) = Some (AST.Gfun fd))
+          by (apply Genv.find_def_symbol; eauto).
+        assert (DEFMAPfd_main : (AST.prog_defmap prog) ! (prog_main prog) = Some (AST.Gfun fd_main)).
+        { apply AST.prog_defmap_norepet.
+          - apply SIns_list_norepet.
+            now apply ListExt.SBinds_map_fst_SIns.
+          - exact INmain. }
+        congruence.
+      }
+      subst fd.
+
       eapply match_callstate with
-        (cenv := mkcompilenv match f with AST.Internal f => f.(fn_temps) | _ => [] end prog.(prog_extra).(Prog.prog_malloc) prog.(prog_extra).(Prog.prog_free))
+        (cenv := mkcompilenv match fd_main with AST.Internal f => f.(fn_temps) | _ => [] end prog.(prog_extra).(Prog.prog_malloc) prog.(prog_extra).(Prog.prog_free))
         (i := 1%positive).
-      + eapply Semantics.wt_Callstate with (sig := Prog.mk_signature [] t_nat) (ctx := Ctxt.with_pure (Maps.PTree.empty _) (Prog.mk_glob_ctxt prog)); auto.
-        * destruct wt_prog_main as (gdef_main & HIn_main).
-          specialize (proj1 (Forall_forall _ _) wt_prog_defs _ HIn_main) as Hwt_main.
-          cbn in Hwt_main.
-          apply Genv.find_funct_ptr_inversion in Hfind_funct_ptr as (ident & HIn).
-          specialize (proj1 (Forall_forall _ (Prog.prog_defs prog)) wt_prog_defs (ident, AST.Gfun f) HIn) as Hwt_fmain.
-          cbn in Hwt_fmain.
-          inversion Hwt_fmain; subst.
-          apply H2.
-        * inversion Hfunsig; subst.
-          destruct f0; cbn in *; subst.
+      + eapply Semantics.wt_Callstate with (sig := Prog.mk_signature [] t_nat) (ctx := Ctxt.with_pure (Maps.PTree.empty _) (Ctxt.with_stack [] (Prog.mk_glob_ctxt prog))); auto.
+        * inversion FUNSIG; subst.
+          destruct f; cbn in *; subst.
           destruct fn_params; [ | discriminate ]; clear H1.
           constructor.
           constructor.
           inversion SIG.
         * constructor; constructor.
-      + (inversion Hmatch_fundef; subst); [ | reflexivity ].
-        inversion Hlo; subst.
+      + inversion MATCHfd; subst; [ | reflexivity ].
+        inversion LINK; subst.
         destruct H1; subst.
         unfold id_malloc, id_free.
         unfold transl_fundef.
@@ -1042,8 +1052,9 @@ Section TRANSLATION.
 
     - intros T1 Hmatch_states.
       inversion Hmatch_states; subst;
-        inversion WT; subst;
-        inversion State_wt_cmd; subst.
+        inversion WT; subst.
+      inversion State_wt_cmd as [ WTcmd ]; subst;
+        inversion WTcmd; subst.
       cbn in TC.
       apply bind_inversion in TC as ( c_b' & TC_b & TC ).
       apply bind_inversion in TC as ( c_c' & TC_c & TC ).
@@ -1060,14 +1071,23 @@ Section TRANSLATION.
     - intros T1 Hmatch_states.
       inversion Hmatch_states; subst.
       inversion WT; subst.
+      inversion State_wt_function as [ WTfun ]; subst;
+        inversion WTfun; subst;
+        clear State_wt_function.
+      inversion State_wt_cmd as [ WTcmd ]; subst;
+        inversion WTcmd; subst;
+        clear State_wt_cmd.
+      inversion State_wt_env as [ WTenv ]; subst;
+        clear State_wt_env.
       inversion MCTXT as ( Eglob_ctxt ).
-      apply bind_inversion in TC as (targs & TE_args & TC).
-      inversion TC; subst; clear TC.
-      specialize (transl_args_correct ltac:(inversion State_wt_cmd; eauto) State_wt_env MCENV MTEMPS TE_args Heval_args) as ( tv_args & Heval_args' & Hinj_args ).
+      apply bind_inversion in TC as (targs & TE_args & TC);
+        cbn in TC;
+        inversion TC; subst; clear TC.
+
+      specialize (transl_args_correct ltac:(eauto) WTenv MCENV MTEMPS TE_args Heval_args) as ( tv_args & Heval_args' & Hinj_args ).
       specialize (Heval_args' (Genv.globalenv tprog) (Values.Vptr sp Ptrofs.zero) m).
       specialize (function_ptr_translated TRANSL Hfind_funct_ptr) as ( cu & tfd & Hfind_funct & Hmatch_fundef & Hlinkorder ).
       rewrite <- Genv.find_funct_find_funct_ptr in Hfind_funct.
-      assert (t = t_out) by (now inversion State_wt_cmd); subst t.
       assert (Heq: exists fn_callee, fd = AST.Internal fn_callee) by admit;
         (* (inversion State_wt_cmd; subst; *)
         (*  unfold Ctxt.get_global in Hfind_fn; *)
@@ -1081,26 +1101,25 @@ Section TRANSLATION.
       assert (H: exists target, Semantics.seq_cont_target k target)
         by (inversion Hseq_cont; eexists; constructor);
         destruct H as (target_id & Hseq_cont_target).
-      assert (t_out = fn_return fn_callee).
-      {
-        inversion State_wt_cmd; subst.
-        unfold Ctxt.get_global in Hfind_fn.
-        unfold Genv.find_funct_ptr in Hfind_funct_ptr.
-        admit.
-        (* rewrite Eglob_ctxt in Hfind_fn. *)
-        (* unfold Defs.fundef in *. *)
-        (* rewrite Hfind_symbol in Hfind_fn. *)
-        (* rewrite Hfind_fn in Hfind_funct_ptr. *)
-        (* now inversion Hfind_funct_ptr; subst. *)
-      }
+      (* assert (t_out = fn_return fn_callee). *)
+      (* { *)
+      (*   inversion State_wt_cmd; subst. *)
+      (*   unfold Ctxt.get_global in Hfind_fn. *)
+      (*   unfold Genv.find_funct_ptr in Hfind_funct_ptr. *)
+      (*   admit. *)
+      (*   (* rewrite Eglob_ctxt in Hfind_fn. *) *)
+      (*   (* unfold Defs.fundef in *. *) *)
+      (*   (* rewrite Hfind_symbol in Hfind_fn. *) *)
+      (*   (* rewrite Hfind_fn in Hfind_funct_ptr. *) *)
+      (*   (* now inversion Hfind_funct_ptr; subst. *) *)
+      (* } *)
       subst.
       eexists ?[SN], ?[T2].
       split; [ eapply Smallstep.star_refl | split ].
       eapply Smallstep.plus_one.
       + unfold make_call; erewrite Semantics.Facts.seq_cont_target_cont_target; [ | now eauto ].
         eapply Cminor.step_call with ( fd := tfd ).
-        * inversion State_wt_cmd; subst.
-          unfold global_ptr.
+        * unfold global_ptr.
           constructor; cbn.
           reflexivity.
         * apply Heval_args'.
@@ -1145,15 +1164,19 @@ Section TRANSLATION.
     - intros T1 Hmatch_states.
       inversion Hmatch_states; subst.
       inversion WT; subst.
+      inversion State_wt_cmd as [ WTcmd ];
+        inversion WTcmd; subst;
+        clear State_wt_cmd.
+      inversion State_wt_env as [ WTenv ];
+        clear State_wt_env.
       inversion MCTXT as ( Eglob_ctxt ).
       apply bind_inversion in TC as ( targs & TE_args & TC ).
       cbn in TC;
         inversion TC; subst; clear TC.
-      specialize (transl_args_correct ltac:(inversion State_wt_cmd; eauto) State_wt_env MCENV MTEMPS TE_args Heval_args) as ( tv_args & Heval_args' & Hinj_args ).
+      specialize (transl_args_correct ltac:(eauto) WTenv MCENV MTEMPS TE_args Heval_args) as ( tv_args & Heval_args' & Hinj_args ).
       specialize (Heval_args' (Genv.globalenv tprog) (Values.Vptr sp Ptrofs.zero) m).
       specialize (function_ptr_translated TRANSL Hfind_funct_ptr) as ( cu & tfd & Hfind_funct & Hmatch_fundef & Hlinkorder ).
       rewrite <- Genv.find_funct_find_funct_ptr in Hfind_funct.
-      assert (t = t_out) by (now inversion State_wt_cmd); subst t.
       assert (Heq: exists f, fd = AST.Internal f) by admit
       (* (inversion State_wt_cmd; subst; *)
       (*  unfold Ctxt.get_global in Hfind_fn; *)
@@ -1169,8 +1192,7 @@ Section TRANSLATION.
       split; [ eapply Smallstep.star_refl | split ].
       eapply Smallstep.plus_one.
       + eapply Cminor.step_tailcall with ( fd := tfd ).
-        * inversion State_wt_cmd; subst.
-          unfold global_ptr.
+        * unfold global_ptr.
           constructor; cbn.
           reflexivity.
         * apply Heval_args'.
@@ -1190,17 +1212,19 @@ Section TRANSLATION.
         -- (inversion Hcall_cont; subst; inversion MK; subst); [ constructor | (econstructor; eauto); [ now eapply match_temps_pop_stack; eauto | now eapply match_cont_pop_stack; eauto ] ].
     - intros T1 Hmatch_states.
       inversion Hmatch_states; subst.
+      inversion WT as [ _ WTcmd' _ WTenv' _ _ ]; subst.
+      inversion WTcmd' as [ WTcmd ];
+        inversion WTcmd as [ | | ?ty_ctxt ?e ?c1 ?c2 ?t WTif ?WTthen ?WTelse | | | | | | | | | | | ]; subst;
+        clear WTcmd'.
+      inversion WTenv' as [ WTenv ];
+        clear WTenv'.
       cbn in TC.
       apply bind_inversion in TC as ( ( te_if & mc_if ) & TE_if & TC ).
       destruct (AST.chunk_eq mc_if AST.Mbool); [ subst; cbn in TC | discriminate ].
       apply bind_inversion in TC as ( tc_then & TC_then & TC ).
       apply bind_inversion in TC as ( tc_else & TC_else & TC ).
       inversion TC; subst; clear TC.
-      assert (WT_if: Expr.wt_expr (Ctxt.ctxt_pure ctx) e_i Types.t_bool)
-        by (inversion WT; subst; inversion State_wt_cmd; now subst).
-      assert (WT_env: Semantics.wt_env fn (Ctxt.ctxt_pure ctx) env)
-        by (inversion WT; now subst).
-      specialize (transl_expr_sized_progress WT_if TE_if WT_env MCENV MTEMPS Heval_if) as
+      specialize (transl_expr_sized_progress WTif TE_if WTenv MCENV MTEMPS Heval_if) as
         ( tv & Hteval & Hinj ).
       specialize (Hteval (Genv.globalenv tprog) (Values.Vptr sp Ptrofs.zero) m).
       (* inversion WT; subst; inversion State_wt_cmd; subst. *)
@@ -1208,10 +1232,14 @@ Section TRANSLATION.
       split; [ apply Smallstep.star_refl | split ].
       + apply Smallstep.plus_one; eapply Cminor.step_ifthenelse with (b := b); eauto with deep_gallinac.
       + eapply match_state with (ctx := ctx) (t := t) (id_malloc := id_malloc) (id_free := id_free); auto.
-        * (eapply Lemmas.preservation_State_State; eauto); [ admit | inversion WT; subst; inversion State_wt_cmd; now destruct b ].
+        * (eapply Lemmas.preservation_State_State; eauto); [ admit | now destruct b ].
         * now destruct b.
     - intros T1 Hmatch_states.
       inversion Hmatch_states; subst.
+      inversion WT as [ _ WTcmd' _ _ _ _ ]; subst.
+      inversion WTcmd' as [ WTcmd ]; subst;
+        inversion WTcmd as [ | | | ?ty_ctxt ?c_cond ?c_body ?id_cond ?id_body WTcond ?WTbody | | | | | | | | | | ] ; subst;
+        clear WTcmd'.
       cbn in TC.
       apply bind_inversion in TC as ( c_cond' & TC_cond & TC ).
       apply bind_inversion in TC as ( c_body' & TC_body & TC ).
@@ -1234,23 +1262,19 @@ Section TRANSLATION.
       eapply match_state with (id_malloc := id_malloc) (id_free := id_free) (ctx := ctx) (t := Types.t_bool); auto.
       + eapply Lemmas.preservation_State_State; eauto.
         admit.
-        inversion WT; subst; inversion State_wt_cmd; now subst.
       + eapply match_cont_Kloop1; now eauto.
     - intros T1 Hmatch_states.
       inversion Hmatch_states; subst.
+      inversion WT as [ | ?f ?args ?k ?s ?m ?inj ?sig ?ctx WTfd WTcall FUNSIG WTcont | ];
+        subst.
+      inversion WTfd as [ ?ctx ?func WTf | ]; subst.
       apply bind_inversion in TFD as ( tf & TF & TFD ).
       inversion TFD; subst; clear TFD.
       unfold transl_function in TF.
       specialize TF as TFB.
       apply bind_inversion in TF as ( tbody & TC & TF ).
       inversion TF; subst; clear TF.
-      assert (WTf: (* Prog. *)wt_function (Prog.mk_glob_ctxt prog) fn) by (now inversion WT; subst; inversion Hwt_fundef).
-      assert (WTcall: wt_fundef_call args (AST.Internal fn)) by (now inversion WT).
-      assert (WTbody: exists t, wt_cmd (Prog.mk_function_ctxt fn.(fn_temps) (Prog.mk_glob_ctxt prog)) fn.(fn_body) t)
-        by (inversion WT; subst; inversion Hwt_fundef; subst;
-            inversion Hwt_function;
-            eexists; apply wt_fn_cmd);
-        destruct WTbody as (t_body & WTbody).
+      specialize (wt_fn_cmd _ _ _ _ _ WTf) as WTbody.
       assert (WTinj: CCInj.wf s m inj) by (now inversion WT).
       assert (SBinds_temps: ListExt.SBinds fn.(fn_temps)) by (now inversion WTf).
       specialize

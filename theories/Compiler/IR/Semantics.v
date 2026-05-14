@@ -405,7 +405,7 @@ Section Semantics.
                               (DEREF: List.nth_error locals n = Some nm)
                               (MUTATE: Store.mutate s.(store) nm (memval_of_value v) = Some st')
                               (WT: wt_value v t)
-                              (STORE: (inhabited (sized t) /\ exists v_cc mc, Mem.store mc m sp (offset_to_offset (Z.of_nat n)) v_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj v v_cc) \/ (notT (sized t) /\ m' = m))
+                              (STORE: (Sized t /\ exists v_cc mc, Mem.store mc m sp (offset_to_offset (Z.of_nat n)) v_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj v v_cc) \/ (~Sized t /\ m' = m))
     , builtin
         (c_write_var n t e) genv env locals sp
         s m inj
@@ -432,7 +432,7 @@ Section Semantics.
                              (EVAL: eval e_ptr env = Some (Value.v_ptr v_ptr))
                              (LOOKUP: Heap.lookup s.(heap) v_ptr = Some (memval_of_value v_read))
                              (WT: wt_value v_read t)
-                             (LOAD: sized t -> exists v_ptr_b_cc v_ptr_ofs_cc v_read_cc mc,
+                             (LOAD: Sized t -> exists v_ptr_b_cc v_ptr_ofs_cc v_read_cc mc,
                                    Mem.load mc m v_ptr_b_cc (Ptrofs.unsigned v_ptr_ofs_cc) = Some v_read_cc /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj (Value.v_ptr v_ptr) (Values.Vptr v_ptr_b_cc v_ptr_ofs_cc) /\ CCInj.InjValue inj v_read v_read_cc)
     , builtin
         (c_read_ptr e_ptr t) genv env locals sp
@@ -444,7 +444,7 @@ Section Semantics.
                               (EVAL_data: eval e_data env = Some v_data)
                               (MUTATE: Heap.mutate s.(heap) v_ptr (memval_of_value v_data) = Some hp')
                               (WT: wt_value v_data t)
-                              (STORE: (inhabited (sized t) /\ exists v_ptr_b_cc v_ptr_ofs_cc v_data_cc mc, Mem.store mc m v_ptr_b_cc (Ptrofs.unsigned v_ptr_ofs_cc) v_data_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj (Value.v_ptr v_ptr) (Values.Vptr v_ptr_b_cc v_ptr_ofs_cc) /\ CCInj.InjValue inj v_data v_data_cc) \/ (notT (sized t) /\ m' = m))
+                              (STORE: (Sized t /\ exists v_ptr_b_cc v_ptr_ofs_cc v_data_cc mc, Mem.store mc m v_ptr_b_cc (Ptrofs.unsigned v_ptr_ofs_cc) v_data_cc = Some m' /\ type_mem_chunk t = Some mc /\ CCInj.InjValue inj (Value.v_ptr v_ptr) (Values.Vptr v_ptr_b_cc v_ptr_ofs_cc) /\ CCInj.InjValue inj v_data v_data_cc) \/ (~Sized t /\ m' = m))
 
     , builtin
         (c_write_ptr e_ptr t e_data) genv env locals sp

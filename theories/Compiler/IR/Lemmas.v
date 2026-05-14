@@ -72,10 +72,10 @@ Section Pure.
         destruct v; discriminate.
   Qed.
 
-  Lemma value_compcert_sized {St inj v tv} (INJ: @CCInj.InjValue St inj v tv): Value.sized v.
+  Lemma value_compcert_sized {St inj v tv} (INJ: @CCInj.InjValue St inj v tv): Value.Sized v.
   Proof.
-    inversion INJ; subst;
-      now constructor.
+    apply Facts.inject_value_complete in INJ.
+    destruct v; try constructor; discriminate.
   Qed.
 
 End Pure.
@@ -202,11 +202,11 @@ Section Determinism.
       assert (v1 = v) by congruence; subst; clear EVAL0.
       assert (st'0 = st') by congruence; subst; clear MUTATE0.
       split; [ | now auto ].
-      destruct STORE as [ ([ SIZED ] & (v_cc & mc & STORE & TMC & [ INJ ])) | (NSIZED & EQ) ],
-          STORE0 as [ ([ SIZED0 ] & (v_cc0 & mc0 & STORE0 & TMC0 & [ INJ0 ])) | (NSIZED0 & EQ0) ];
+      destruct STORE as [ (SIZED & (v_cc & mc & STORE & TMC & INJ)) | (NSIZED & EQ) ],
+          STORE0 as [ (SIZED0 & (v_cc0 & mc0 & STORE0 & TMC0 & INJ0)) | (NSIZED0 & EQ0) ];
         [ clear WT0 | contradiction | contradiction | congruence ].
       assert (mc0 = mc) by congruence; subst; clear TMC0.
-      specialize (value_compcert_fun INJ INJ0) as EQ; subst; clear INJ0.
+      specialize (InjValue_fun INJ INJ0) as EQ; subst; clear INJ0.
       congruence.
     - assert (v_size0 = v_size) by congruence; subst; clear EVAL_SIZE0.
       assert (v_init0 = v_init) by congruence; subst; clear EVAL_INIT0.
@@ -215,7 +215,7 @@ Section Determinism.
         assert (prov0 = prov) by congruence; subst;
         clear ALLOC_GC0.
       assert (mc0 = mc) by congruence; subst; clear EQmc0.
-      specialize (value_compcert_fun INJ INJ0) as EQ; subst; clear INJ0.
+      specialize (InjValue_fun INJ INJ0) as EQ; subst; clear INJ0.
       assert (m_i2 = m_i0) by congruence;
         assert (b_cc0 = b_cc) by congruence;
         subst; clear ALLOC_CC0.
@@ -228,10 +228,10 @@ Section Determinism.
     - assert (v_ptr0 = v_ptr) by congruence; subst; clear EVAL_ptr0.
       assert (v_data0 = v_data) by congruence; subst; clear EVAL_data0.
       assert (hp'0 = hp') by congruence; subst; clear MUTATE0.
-      destruct STORE as [ ([ SIZED ] & (v_ptr_b_cc & v_ptr_ofs_cc & v_data_cc & mc & STORE & TMC & [ INJptr ] & [ INJdata ])) | (NSIZED & EQ) ],
-          STORE0 as [ ([ SIZED0 ] & (v_ptr_b_cc0 & v_ptr_ofs_cc0 & v_data_cc0 & mc0 & STORE0 & TMC0 & [ INJptr0 ] & [ INJdata0 ])) | (NSIZED0 & EQ0) ]; [ | contradiction | contradiction | now subst ].
-      specialize (value_compcert_fun INJptr INJptr0) as EQ; inversion EQ; subst; clear EQ.
-      specialize (value_compcert_fun INJdata INJdata0) as EQ; subst.
+      destruct STORE as [ (SIZED & (v_ptr_b_cc & v_ptr_ofs_cc & v_data_cc & mc & STORE & TMC & INJptr & INJdata)) | (NSIZED & EQ) ],
+          STORE0 as [ (SIZED0 & (v_ptr_b_cc0 & v_ptr_ofs_cc0 & v_data_cc0 & mc0 & STORE0 & TMC0 & INJptr0 & INJdata0)) | (NSIZED0 & EQ0) ]; [ | contradiction | contradiction | now subst ].
+      specialize (InjValue_fun INJptr INJptr0) as EQ; inversion EQ; subst; clear EQ.
+      specialize (InjValue_fun INJdata INJdata0) as EQ; subst.
       clear WT0 INJptr0 INJdata0.
       assert (mc0 = mc) by congruence; subst; clear TMC0.
       assert (m'0 = m') by congruence; subst; clear STORE0.
@@ -240,7 +240,7 @@ Section Determinism.
         assert (prov0 = prov) by congruence; subst;
         clear EVAL0.
       assert (hp'0 = hp') by congruence; subst; clear FREE_GC0.
-      specialize (value_compcert_fun INJ INJ0) as EQ; inversion EQ; subst; clear EQ INJ0.
+      specialize (InjValue_fun INJ INJ0) as EQ; inversion EQ; subst; clear EQ INJ0.
       assert (m'0 = m') by congruence; subst; clear FREE_CC0.
  auto.
     - assert (v_ptr0 = v_ptr) by congruence; subst.
@@ -317,7 +317,7 @@ Section WT.
         now rewrite Earchi.
   Qed.
 
-  Lemma xtype_of_type_sized t (Hsized: Types.sized t): exists xt, type_to_xtype t = Some xt.
+  Lemma xtype_of_type_sized t (Hsized: Types.Sized t): exists xt, type_to_xtype t = Some xt.
     destruct Hsized; now eexists.
   Qed.
 
@@ -545,11 +545,11 @@ Section Preservation.
   Lemma mutate_store_wf_inj {St Hp s m inj nm v s' typ v_ptr_b_cc v_ptr_ofs_cc m'}
     (WF: @CCInj.wf St Hp s m inj)
     (MUT: Store.mutate (Primitives.store s) nm v = Some s')
-    (CC: inhabited (Types.sized typ) /\
+    (CC: inhabited (Types.Sized typ) /\
            (exists v_cc (mc : AST.memory_chunk),
                Memory.Mem.store mc m v_ptr_b_cc v_ptr_ofs_cc v_cc = Some m' /\
                  type_mem_chunk typ = Some mc /\ CCInj.InjValue inj (Value.value_of_memval v) v_cc) \/
-           (notT (Types.sized typ) /\ m' = m))
+           (notT (Types.Sized typ) /\ m' = m))
         : CCInj.wf (Primitives.mkState s' (Primitives.heap s)) m' inj.
   Proof.
     constructor;

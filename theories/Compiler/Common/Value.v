@@ -11,12 +11,21 @@ Inductive value :=
 | v_ptr  : Pointer.t -> value
 .
 
-Inductive sized: value -> Set :=
-| sized_bool: forall b, sized (v_bool b)
-| sized_nat: forall n, sized (v_nat n)
-| sized_ofst: forall n, sized (v_ofst n)
-| sized_ptr: forall p, sized (v_ptr p)
+Inductive Sized: value -> Prop :=
+| sized_bool: forall b, Sized (v_bool b)
+| sized_nat: forall n, Sized (v_nat n)
+| sized_ofst: forall n, Sized (v_ofst n)
+| sized_ptr: forall p, Sized (v_ptr p)
 .
+
+Definition sized (v: value): bool :=
+  match v with
+  | v_bool _ => true
+  | v_tt => false
+  | v_nat _ => true
+  | v_ofst _ => true
+  | v_ptr _ => true
+  end.
 
 Inductive value_memval: value -> memval -> Prop :=
 | value_memval_unit: value_memval v_tt VUnit
@@ -25,14 +34,6 @@ Inductive value_memval: value -> memval -> Prop :=
 | value_memval_ofst: forall n, value_memval (v_ofst n) (VOfst n)
 | value_memval_ptr: forall p, value_memval (v_ptr p) (VPtr p)
 .
-
-(* Inductive wt_valueT: value -> type -> Set := *)
-(* | wt_vT_tt: wt_valueT v_tt t_unit *)
-(* | wt_vT_bool: forall b, wt_valueT (v_bool b) t_bool *)
-(* | wt_vT_nat: forall n, wt_valueT (v_nat n) t_nat *)
-(* | wt_vT_ofst: forall n, wt_valueT (v_ofst n) t_ofst *)
-(* | wt_vT_ptr: forall p, wt_valueT (v_ptr p) t_ptr *)
-(* . *)
 
 Inductive wt_value: value -> type -> Prop :=
 | wt_v_tt: wt_value v_tt t_unit
@@ -71,6 +72,16 @@ Definition memval_of_value (v: value): memval :=
 
 Module Facts.
 
+  Lemma sized_correct: forall v, Bool.reflect (Sized v) (sized v).
+  Proof.
+    destruct v; constructor; try constructor; intros contra; now inversion contra.
+  Qed.
+
+  Lemma sized_complete: forall {v}, Sized v -> sized v = true.
+  Proof.
+    now destruct 1.
+  Qed.
+
   Lemma value_of_memval_spec: forall v v', value_memval v v' <-> value_of_memval v' = v.
   Proof.
     intros v v'.
@@ -89,7 +100,7 @@ Module Facts.
     - destruct v; intros H; subst; constructor.
   Qed.
 
-  Lemma value_sized_memval [v] (Hsized: sized v): exists v', value_memval v v'.
+  Lemma value_sized_memval [v] (Hsized: Sized v): exists v', value_memval v v'.
   Proof.
     destruct Hsized;
       (try (eexists; now econstructor)).
@@ -111,7 +122,7 @@ Module Facts.
   Hint Resolve value_memval_fun_r: deep_gallinac.
   Hint Rewrite value_memval_fun_r: deep_gallinac.
 
-  Lemma sized_or_unit_dec: forall v, (sized v * (v <> v_tt))%type + { v = v_tt }.
+  Lemma sized_or_unit_dec: forall v, (Sized v * (v <> v_tt))%type + { v = v_tt }.
   Proof.
     destruct v;
       (try now constructor);
@@ -137,7 +148,7 @@ Module Facts.
   Qed.
   #[global] Hint Resolve wt_value_fun: deep_gallinac.
 
-  Lemma wt_value_sized v t (WT: wt_value v t) (SIZED: Value.sized v): Types.sized t.
+  Lemma wt_value_sized v t (WT: wt_value v t) (SIZED: Value.Sized v): Types.Sized t.
   Proof.
     apply type_of_value_complete in WT.
     destruct v; inversion SIZED; cbn in WT; subst; constructor.

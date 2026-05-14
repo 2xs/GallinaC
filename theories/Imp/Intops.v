@@ -222,12 +222,25 @@ Module Unsigned.
     Qed.
     #[global] Hint Resolve modulus_pos: ints.
 
-    Remark max_lt_modulus {UInt: Unsigned}: (max_unsigned UInt) <= (modulus UInt).
+    Remark modulus_neq_0 {UInt: Unsigned}: 0 <> modulus UInt.
+    Proof.
+      apply Z.lt_neq, modulus_pos_lt.
+    Qed.
+    #[global] Hint Resolve modulus_neq_0: ints.
+
+    Remark max_lt_modulus {UInt: Unsigned}: (max_unsigned UInt) < (modulus UInt).
     Proof.
       unfold max_unsigned, modulus.
       lia.
     Qed.
     #[global] Hint Resolve max_lt_modulus: ints.
+
+    Remark max_le_modulus {UInt: Unsigned}: (max_unsigned UInt) <= (modulus UInt).
+    Proof.
+      unfold max_unsigned, modulus.
+      lia.
+    Qed.
+    #[global] Hint Resolve max_le_modulus: ints.
 
     Lemma bounded_lt_modulus {UInt: Unsigned}: forall (n: UInt), Bounded n -> (to_Z n) < (modulus UInt).
     Proof.
@@ -254,10 +267,33 @@ Module Unsigned.
     Qed.
     #[global] Hint Resolve add_bounded_transparent: ints.
 
-    Theorem add_bounded_semi_transparent {UInt: Unsigned} (l r: carrier UInt) (BOUNDEDl: Bounded l) (BOUNDEDr: Bounded r) (EQ: (max_unsigned UInt) <= to_Z l + to_Z r) : to_Z (add l r) = to_Z l + to_Z r - (modulus UInt).
+    Lemma raw_add_lt_double_modulus [UInt: Unsigned] [l r: carrier UInt]
+      (BOUNDEDl: Bounded l) (BOUNDEDr: Bounded r)
+      : to_Z l + to_Z r < 2 * modulus UInt.
     Proof.
-      unfold add.
-    Admitted.
+      rewrite <- Z.add_diag.
+      specialize (bounded_lt_modulus _ BOUNDEDl).
+      specialize (bounded_lt_modulus _ BOUNDEDr).
+      lia.
+    Qed.
+    #[global] Hint Resolve raw_add_lt_double_modulus: ints.
+
+    Theorem add_bounded_semi_transparent {UInt: Unsigned} (l r: carrier UInt) (BOUNDEDl: Bounded l) (BOUNDEDr: Bounded r) (EQ: (max_unsigned UInt) < to_Z l + to_Z r) : to_Z (add l r) = to_Z l + to_Z r - (modulus UInt).
+    Proof.
+      unfold add, max_unsigned, min_unsigned, modulus.
+      specialize (raw_add_lt_double_modulus BOUNDEDl BOUNDEDr) as EQ'.
+      destruct BOUNDEDl as [ LTl0 LElm ].
+      destruct BOUNDEDr as [ LTr0 LErm ].
+      revert LTl0 LElm LTr0 LErm EQ EQ'.
+      generalize (to_Z r) as y.
+      generalize (to_Z l) as x.
+      unfold max_unsigned, min_unsigned, modulus.
+      generalize (2 ^ Z.pos (BW UInt)) as m.
+      intros. rewrite of_Z_id; [ | apply Z.mod_pos_bound; lia ].
+      clear UInt l r.
+      symmetry.
+      apply Zmod_unique with (q := 1); lia.
+    Qed.
 
     Theorem eqb_refl {UInt: Unsigned} (a: carrier UInt):
       eqb a a = true.

@@ -61,7 +61,7 @@ Inductive InjValue {St} (inj: @injection St): value -> Values.val -> Prop :=
     InjValue inj (v_ofst n) v
 | inj_ptr_live: forall b o prov b' o',
     ListExt.BindIn b b' inj.(inj_hp_map) ->
-    (0 <= (Z.of_N o) < Ptrofs.max_signed)%Z ->
+    Intops.Unsigned.Bounded o ->
     Ptrofs.signed o' = Z.of_N o ->
     InjValue inj (v_ptr (Some (Addr.mkAddr b o, prov))) (Values.Vptr b' o')
 | inj_ptr_null: InjValue inj (v_ptr None) (Values.Vnullptr)
@@ -86,7 +86,14 @@ Definition inj_value {St} (inj: @injection St) (v: value): option Values.val :=
         None
   | v_ptr None => Some (Values.Vnullptr)
   | v_ptr (Some ({| Addr.block := b; Addr.offset := o |}, prov)) =>
-      None
+      match findA (Nat.eqb b) inj.(inj_hp_map) with
+      | Some b' =>
+          if (IntCarrier.to_Z o <=? Unsigned.max_unsigned n_ofst_t)%Z then
+            Some (Values.Vptr b' (Ptrofs.repr (IntCarrier.to_Z o)))
+          else
+            None
+      | None => None
+      end
   end.
 
 Definition memval_memsize: nat :=
@@ -202,7 +209,7 @@ Module Facts.
       right; intros contra; inversion contra.
   Qed.
 
-  Lemma value_compcert_fun [St inj v_gc v_cc v_cc']:
+  Lemma InjValue_fun [St inj v_gc v_cc v_cc']:
     @InjValue St inj v_gc v_cc -> InjValue inj v_gc v_cc' -> v_cc' = v_cc.
   Proof.
     intros H H'.
@@ -236,10 +243,10 @@ Module Facts.
       unfold Coqlib.zeq.
       destruct (Z.eq_dec); [ reflexivity | contradiction ].
   Qed.
-  Hint Resolve value_compcert_fun: deep_gallinac.
-  Hint Rewrite value_compcert_fun: deep_gallinac.
+  Hint Resolve InjValue_fun: deep_gallinac.
+  Hint Rewrite InjValue_fun: deep_gallinac.
 
-  Lemma value_compcert_nat_eq [St inj l r l_i r_i valid_pointer]
+  Lemma InjValue_nat_eq [St inj l r l_i r_i valid_pointer]
     (Hv_cc_l: InjValue inj (v_nat l) (Values.Vint l_i))
     (Hv_cc_r: InjValue inj (v_nat r) (Values.Vint r_i)):
     @InjValue St inj
@@ -258,15 +265,49 @@ Module Facts.
       (try contradiction);
       try constructor.
   Qed.
-  Hint Resolve value_compcert_nat_eq: deep_gallinac.
+  Hint Resolve InjValue_nat_eq: deep_gallinac.
 
-  Lemma type_mem_chunk_sized: forall t, Types.sized t -> exists mc, type_mem_chunk t = Some mc.
+  Lemma inject_value_complete [St inj v v']
+    (INJ: @InjValue St inj v v'):
+    inj_value inj v = Some v'.
+  Proof.
+    destruct INJ as [ [ ] | | | | ]; auto; cbn.
+    - destruct HBounded.
+      destruct (Z.leb_spec (IntCarrier.to_Z n) (Unsigned.max_unsigned nat_uint32_t)) as [ _ | ]; [ repeat f_equal | change (Unsigned.carrier nat_uint32_t) with NatCarrier.nat_int_carrier in *; lia ].
+      apply Int.eqm_repr_eq.
+      unfold Int.eqm, Zbits.eqmod.
+      exists 0%Z.
+      rewrite Z.mul_0_l, Z.add_0_l.
+      now symmetry.
+    - destruct HBounded.
+      destruct (Z.leb_spec (IntCarrier.to_Z n) (Unsigned.max_unsigned n_ofst_t)) as [ _ | ];
+        [ | change (Unsigned.carrier n_ofst_t) with NCarrier.n_int_carrier in *; lia ].
+      destruct Archi.ptr64; destruct Heq as (i & UNSIGNED & EQ); subst; repeat f_equal;
+        [ apply Int64.eqm_repr_eq; unfold Int64.eq | apply Int.eqm_repr_eq; unfold Int.eq ];
+        unfold Zbits.eqmod;
+        exists 0%Z;
+        rewrite Z.mul_0_l, Z.add_0_l;
+        now symmetry.
+    - destruct H0 as [ LE0 LEm ].
+      rewrite (ListExt.BindIn_findA_reflect_eq Nat.eqb_spec H).
+      change (Unsigned.carrier n_ofst_t) with NCarrier.n_int_carrier in *.
+      destruct (Z.leb_spec (IntCarrier.to_Z o) (Unsigned.max_unsigned n_ofst_t)); [ repeat f_equal | lia ].
+      apply Ptrofs.eqm_repr_eq.
+      unfold Ptrofs.eqm, Zbits.eqmod.
+      exists 0%Z.
+      rewrite Z.mul_0_l, Z.add_0_l.
+      assert (Hrewrite: Ptrofs.signed o' = Ptrofs.unsigned o') by (apply Ptrofs.signed_eq_unsigned; apply Ptrofs.signed_positive; lia);
+        rewrite Hrewrite in H1; clear Hrewrite.
+      now symmetry.
+  Qed.
+
+  Lemma type_mem_chunk_sized: forall t, Types.Sized t -> exists mc, type_mem_chunk t = Some mc.
   Proof.
     intros t Hstorable; destruct Hstorable; eexists; econstructor.
   Qed.
   Hint Resolve type_mem_chunk_sized: deep_gallinac.
 
-  Lemma type_sized_mem_chunk: forall t mc, type_mem_chunk t = Some mc -> Types.sized t.
+  Lemma type_sized_mem_chunk: forall t mc, type_mem_chunk t = Some mc -> Types.Sized t.
   Proof.
     intros t mc Hmc.
     destruct t; try discriminate; try constructor.

@@ -48,18 +48,23 @@ Section State.
     | t_fun t_args t_out => denote_type_list denote_type t_args (denote_type t_out)
     end.
 
-  Definition denote_type_memval {t: type} (GROUND: ground t): Memval.MemStorable :=
-    match GROUND with
-    | ground_unit => Memval.StorableUnit.unit_storable
-    | ground_bool => Memval.StorableBool.bool_storable
-    | ground_nat => Memval.StorableNat.nat_storable
-    | ground_ofst => Memval.StorableOfst.ofst_storable
-    | ground_ptr => Memval.StorablePtr.ptr_storable
+  Definition denote_type_memval {t: type}: ground t -> Memval.MemStorable :=
+    match t with
+    | t_unit => fun _ => Memval.StorableUnit.unit_storable
+    | t_bool => fun _ => Memval.StorableBool.bool_storable
+    | t_nat => fun _ => Memval.StorableNat.nat_storable
+    | t_ofst => fun _ => Memval.StorableOfst.ofst_storable
+    | t_ptr => fun _ => Memval.StorablePtr.ptr_storable
+    | t_fun ti to =>
+        fun GROUND =>
+        match ground_nonground_exclude _ GROUND (nonground_t_fun ti to) with
+        end
     end.
 
   Lemma denote_types_agree: forall {t: type} (GROUND: ground t), denote_type t = Memval.obj (denote_type_memval GROUND).
   Proof using St Hp.
-    now induction GROUND.
+    destruct t; intros; cbn; try reflexivity.
+    exfalso; apply (ground_nonground_exclude _ GROUND ltac:(constructor)).
   Qed.
 
   Definition add_to_denote_ctxt (A: Type) (_: positive) (x: type * bool): Type :=
