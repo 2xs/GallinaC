@@ -26,20 +26,20 @@ Inductive wt_cmd: ctxt (type * bool) unit fundef vardef -> cmd -> type -> Type :
 | wt_while: forall {ty_ctxt c_cond c_body id_cond id_body},
     wt_cmd ty_ctxt c_cond t_bool -> wt_cmd ty_ctxt c_cond t_unit -> wt_cmd ty_ctxt (c_while c_cond id_cond c_body id_body) t_unit
 | wt_read_var : forall ty_ctxt n t,
-    ground t ->
+    Ground t ->
     wt_cmd ty_ctxt (c_read_var n t) t
 | wt_write_var : forall ty_ctxt n e t,
-    wt_expr ty_ctxt.(ctxt_pure) e t -> ground t ->
+    wt_expr ty_ctxt.(ctxt_pure) e t -> Ground t ->
     wt_cmd ty_ctxt (c_write_var n t e) t_unit
 | wt_alloc_ptr : forall {ty_ctxt n t e id_ptr id_init},
-    wt_expr ty_ctxt.(ctxt_pure) e t -> ground t ->
+    wt_expr ty_ctxt.(ctxt_pure) e t -> Ground t ->
     wt_cmd ty_ctxt (c_alloc_ptr n t e id_ptr id_init) t_ptr
 | wt_read_ptr : forall ty_ctxt t p,
-    wt_expr ty_ctxt.(ctxt_pure) p t_ptr -> ground t ->
+    wt_expr ty_ctxt.(ctxt_pure) p t_ptr -> Ground t ->
     wt_cmd ty_ctxt (c_read_ptr p t) t
 | wt_write_ptr : forall ty_ctxt p t e,
     wt_expr ty_ctxt.(ctxt_pure) p t_ptr -> wt_expr ty_ctxt e t ->
-    ground t ->
+    Ground t ->
     wt_cmd ty_ctxt (c_write_ptr p t e) t_unit
 | wt_free_ptr : forall ty_ctxt p,
     wt_expr ty_ctxt.(ctxt_pure) p t_ptr ->
@@ -56,7 +56,7 @@ Inductive wt_cmd: ctxt (type * bool) unit fundef vardef -> cmd -> type -> Type :
 | wt_app : forall
     {ty_ctxt f_id args fn}
     (Hfind_fn: Ctxt.get_global f_id ty_ctxt = Some (AST.Gfun (AST.Internal fn)))
-    (Hreturn_ground: ground fn.(fn_return))
+    (Hreturn_ground: Ground fn.(fn_return))
     (Et_args: List.map snd fn.(fn_params) = List.map snd args)
     (WT_args: Forall2T (wt_expr ty_ctxt) (List.map fst args) (List.map snd args)),
     wt_cmd ty_ctxt (c_app f_id fn.(fn_return) args) fn.(fn_return)

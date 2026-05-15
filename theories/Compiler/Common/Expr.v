@@ -6,7 +6,7 @@ From compcert.lib Require Import Maps Integers.
 From GallinaC.Imp Require Import Pointer Intops Uint32 Uintptr.
 
 From GallinaC.Compiler.Common Require Import Ctxt Value CCInj.
-From GallinaC.Compiler.Common Require Export Types(type, t_unit, t_bool, t_nat, t_ofst, t_ptr, t_fun, ground).
+From GallinaC.Compiler.Common Require Export Types(type, t_unit, t_bool, t_nat, t_ofst, t_ptr, t_fun, Ground).
 
 Inductive expr: Type :=
 | e_var: AST.ident -> expr
@@ -141,7 +141,7 @@ Fixpoint eval (e: expr) (env: map_ctxt value): option value :=
 Inductive wt_expr (ctxt : map_ctxt (type * bool)) : expr -> type -> Type :=
 | wt_var : forall var_id t
                   (GET: PTree.get var_id ctxt = Some (t,true))
-                  (GROUND: ground t),
+                  (GROUND: Ground t),
     wt_expr ctxt (e_var var_id) t
 | wt_tt : wt_expr ctxt e_tt t_unit
 | wt_bool : forall b, wt_expr ctxt (e_bool b) t_bool
@@ -307,7 +307,7 @@ Module Facts.
   #[global] Hint Resolve wt_expr_fun: deep_gallinac.
 
   Lemma wt_expr_ground: forall [ctxt e t],
-      wt_expr ctxt e t -> ground t.
+      wt_expr ctxt e t -> Ground t.
   Proof.
     intros ctxt e t Hwt.
     induction Hwt; auto; constructor.
@@ -318,7 +318,7 @@ Module Facts.
       wt_expr ctxt e t -> Types.nonground t -> False.
   Proof.
     intros ctxt e t Hwt Hnonground.
-    assert (Hground: ground t) by apply (wt_expr_ground Hwt).
+    assert (Hground: Ground t) by apply (wt_expr_ground Hwt).
     apply (Types.ground_nonground_exclude _ Hground Hnonground).
   Qed.
   #[global] Hint Resolve wt_expr_not_nonground: deep_gallinac.

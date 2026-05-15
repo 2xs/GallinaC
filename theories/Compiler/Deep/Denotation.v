@@ -5,6 +5,7 @@ From GallinaC.Imp Require Export Monad Primitives Pointer Intops Uint32 Uintptr.
 Import Unsigned.Notations.
 From GallinaC.Compiler.Common Require Export Types Ctxt Expr CCInj.
 From GallinaC.Compiler.Deep Require Import Cmd Prog OpSem(state, step) Typing.
+Import OpSem.Typing(wt_state).
 
 From Corelib Require Derive.
 
@@ -48,7 +49,7 @@ Section State.
     | t_fun t_args t_out => denote_type_list denote_type t_args (denote_type t_out)
     end.
 
-  Definition denote_type_memval {t: type}: ground t -> Memval.MemStorable :=
+  Definition denote_type_memval {t: type}: Ground t -> Memval.MemStorable :=
     match t with
     | t_unit => fun _ => Memval.StorableUnit.unit_storable
     | t_bool => fun _ => Memval.StorableBool.bool_storable
@@ -61,7 +62,7 @@ Section State.
         end
     end.
 
-  Lemma denote_types_agree: forall {t: type} (GROUND: ground t), denote_type t = Memval.obj (denote_type_memval GROUND).
+  Lemma denote_types_agree: forall {t: type} (GROUND: Ground t), denote_type t = Memval.obj (denote_type_memval GROUND).
   Proof using St Hp.
     destruct t; intros; cbn; try reflexivity.
     exfalso; apply (ground_nonground_exclude _ GROUND ltac:(constructor)).
@@ -395,8 +396,8 @@ Section State.
 
   Axiom TODO: forall {A: Type}, A.
 
-  Definition denote_state
-    (s: @state St Hp)
+  Definition denote_state {p: Prog.program} {s: @state St Hp}
+    (WTp: wt_program p) (WTs: wt_state p s)
     : Monad.program (State St Hp) nat :=
     match s with
     | OpSem.State f c k env locals s => TODO

@@ -113,9 +113,9 @@ Definition mk_glob_ctxt [cmd f_extra p_extra] (p: program cmd f_extra p_extra): 
 (* ctx here is the global program context *)
 Record wt_function [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Type) (wt_cmd: ctxt (type * bool) unit (fundef cmd f_extra) vardef -> cmd -> type -> Type) (ctx: ctxt Empty_set Empty_set (fundef cmd f_extra) vardef) (func: (function cmd f_extra)): Type :=
   {
-    wt_fn_return: ground func.(fn_return);
-    wt_fn_params: ForallT (fun idt => ground (snd idt)) func.(fn_params);
-    wt_fn_temps: ForallT (fun idt => ground (snd idt)) func.(fn_temps);
+    wt_fn_return: Ground func.(fn_return);
+    wt_fn_params: Forall (fun idt => Ground (snd idt)) func.(fn_params);
+    wt_fn_temps: Forall (fun idt => Ground (snd idt)) func.(fn_temps);
     wt_fn_cmd: wt_cmd (mk_function_ctxt func.(fn_params) func.(fn_temps) ctx) func.(fn_body) func.(fn_return);
     wt_fn_extra: wt_f_extra func.(fn_extra);
 
@@ -139,7 +139,7 @@ Inductive wt_fundef [cmd: Set] (f_extra: Set) (wt_f_extra: f_extra -> Type) (wt_
 .
 
 Inductive wt_fundef_call cmd f_extra: list value -> (fundef cmd f_extra) -> Prop :=
-| wt_call_Internal: forall args f, Forall2T wt_value args (List.map snd f.(fn_params)) -> wt_fundef_call cmd f_extra args (AST.Internal f)
+| wt_call_Internal: forall args f, Forall2 wt_value args (List.map snd f.(fn_params)) -> wt_fundef_call cmd f_extra args (AST.Internal f)
 | wt_call_malloc: forall o, wt_fundef_call cmd f_extra [v_ofst o] (AST.External AST.EF_malloc)
 | wt_call_free: forall p, wt_fundef_call cmd f_extra [v_ptr p] (AST.External AST.EF_free)
 .
@@ -154,7 +154,7 @@ Inductive wt_init_data: list AST.init_data -> type -> Prop :=
 
 Record wt_globvar cmd f_extra (ctx: ctxt Empty_set Empty_set (fundef cmd f_extra) vardef) (id: AST.ident) (globvar: AST.globvar vardef): Prop :=
   {
-    wt_globvar_type_ground: inhabited (Types.ground globvar.(AST.gvar_info).(var_type));
+    wt_globvar_type_ground: Types.Ground globvar.(AST.gvar_info).(var_type);
     wt_globvar_ctx: get_global id ctx = Some (AST.Gvar globvar);
     wt_globvar_init_len: List.length globvar.(AST.gvar_init) = 1;
     wt_globvar_init_type: wt_init_data globvar.(AST.gvar_init) globvar.(AST.gvar_info).(var_type);

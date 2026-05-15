@@ -537,6 +537,33 @@ Proof.
     right; intros contra; now inversion contra.
 Qed.
 
+Lemma map_opt_Forall2T {A B: Type} {f: A -> option B} {R: A -> B -> Type}
+    (Hsound: forall a b, R a b -> f a = Some b)
+    {l l'} (HF: Forall2T R l l'):
+    map_opt f l = Some l'.
+Proof.
+  induction HF as [| a b l l' Hr _ IH]; cbn.
+  - reflexivity.
+  - rewrite (Hsound _ _ Hr), IH; reflexivity.
+Qed.
+
+Lemma map_opt_Forall2T_inv {A B: Type} {f: A -> option B} {R: A -> B -> Type}
+    (Hcomplete: forall a b, f a = Some b -> R a b)
+    {l l'} (EQ: map_opt f l = Some l'):
+    Forall2T R l l'.
+Proof.
+  revert l' EQ; induction l as [| a l IH]; intros l' EQ; cbn in EQ.
+  - inversion EQ; subst; constructor.
+  - case_eq (f a); [intros b Ea | intros Ea];
+      rewrite Ea in EQ; [| discriminate].
+    case_eq (map_opt f l); [intros bs Eargs | intros Eargs];
+      rewrite Eargs in EQ; [| discriminate].
+    inversion EQ; subst.
+    constructor.
+    + apply Hcomplete, Ea.
+    + apply (IH _ Eargs).
+Qed.
+
 Definition list_eqb {A: Type} (eqb: A -> A -> bool) (l: list A) (l': list A): bool := forall2 eqb l l'.
 
 Lemma list_eqb_refl {A: Type} (eqb: A -> A -> bool) (eqb_spec: forall x y, Bool.reflect (x = y) (eqb x y)): forall l, list_eqb eqb l l = true.

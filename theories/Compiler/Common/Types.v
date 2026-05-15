@@ -1,6 +1,5 @@
 From Stdlib Require Import PArith NArith Arith List.
 Import ListNotations.
-From MetaRocq.Utils Require Export bytestring.
 
 From compcert.common Require AST.
 
@@ -72,14 +71,25 @@ Proof.
 Qed.
 Hint Resolve type_eqb_neq: deep_gallinac.
 
-Inductive ground: type -> Prop :=
-| ground_unit: ground t_unit
-| ground_bool: ground t_bool
-| ground_nat : ground t_nat
-| ground_ofst: ground t_ofst
-| ground_ptr : ground t_ptr
+Inductive Ground: type -> Prop :=
+| ground_unit: Ground t_unit
+| ground_bool: Ground t_bool
+| ground_nat : Ground t_nat
+| ground_ofst: Ground t_ofst
+| ground_ptr : Ground t_ptr
 .
-Hint Constructors ground: deep_gallinac.
+Hint Constructors Ground: deep_gallinac.
+
+Definition ground (t: type): bool :=
+  match t with
+  | t_unit | t_bool | t_nat | t_ofst | t_ptr => true
+  | t_fun _ _ => false
+  end.
+
+Lemma ground_spec: forall t, Bool.reflect (Ground t) (ground t).
+Proof.
+  destruct t; cbn; constructor; try (now constructor); intros H; inversion H.
+Qed.
 
 Inductive nonground: type -> Prop :=
 | nonground_t_fun: forall ti to, nonground (t_fun ti to)
@@ -104,12 +114,7 @@ Definition sized (t: type): bool :=
   | t_fun _ _ => false
   end.
 
-Definition ground_dec_total (t : type) : (ground t) + (nonground t).
-Proof.
-  destruct t; now repeat constructor.
-Defined.
-
-Lemma ground_nonground_exclude: forall t, ground t -> nonground t -> False.
+Lemma ground_nonground_exclude: forall t, Ground t -> nonground t -> False.
 Proof.
   intros t Hground Hnonground;
     destruct t;
@@ -123,7 +128,7 @@ Proof.
   destruct t; constructor; try constructor; intros contra; inversion contra.
 Qed.
 
-Lemma sized_ground: forall t, Sized t -> ground t.
+Lemma sized_ground: forall t, Sized t -> Ground t.
 Proof.
   intros t H; destruct H; constructor.
 Qed.

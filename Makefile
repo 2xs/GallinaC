@@ -30,6 +30,9 @@ extraction/STAMP: Makefile.rocq Makefile.examples.rocq examples/Reverse/ReverseR
 	rocq repl -R theories GallinaC -R examples GallinaC.Examples -batch -load-vernac-source examples/Reverse/ReverseExtraction.v
 	touch extraction/STAMP
 
+%.vo: Makefile.rocq
+	+$(MAKE) -f Makefile.rocq $@
+
 INCLUDE_EXTRACTION = $(addprefix -I , $(wildcard ./extraction))
 
 %.cmi: %.mli

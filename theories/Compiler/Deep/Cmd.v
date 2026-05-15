@@ -3,24 +3,24 @@ From Stdlib Require Import Arith PArith.
 From GallinaC.Compiler.Common Require Export Types Ctxt Expr.
 
 Inductive cmd : Type :=
-| c_ret : expr -> cmd
-| c_bind : AST.ident -> type -> cmd -> cmd -> cmd
-| c_if : expr -> cmd -> cmd -> cmd
-| c_while : cmd -> cmd -> cmd
+| c_ret : forall (e: expr), cmd
+| c_bind : forall (id_b: AST.ident) (t_b: type) (c_b c_c: cmd), cmd
+| c_if : forall (e_if: expr) (c_then c_else: cmd), cmd
+| c_while : forall (c_cond c_body: cmd), cmd
 (* Store commands *)
-| c_with_var : type -> expr -> cmd -> cmd
-| c_read_var : nat -> type -> cmd
-| c_write_var : nat -> type -> expr -> cmd
+| c_with_var : forall (t_v: type) (e_v: expr) (c_c: cmd), cmd
+| c_read_var : forall (o_v: nat) (t_v: type), cmd
+| c_write_var : forall (o_v: nat) (t_v: type) (e_v: expr), cmd
 (* Heap commands *)
-| c_alloc_ptr : expr -> type -> expr -> cmd
-| c_read_ptr : expr -> type -> cmd
-| c_write_ptr : expr -> type -> expr -> cmd
-| c_free_ptr : expr -> cmd
+| c_alloc_ptr : forall (e_size: expr) (t_init: type) (e_init: expr), cmd
+| c_read_ptr : forall (e_ptr: expr) (t_val: type), cmd
+| c_write_ptr : forall (e_ptr: expr) (t_val: type) (e_val: expr), cmd
+| c_free_ptr : forall (e_ptr: expr), cmd
 (* Pointer commands *)
-| c_shift_fw_ptr : expr -> expr -> cmd
-| c_shift_bw_ptr : expr -> expr -> cmd
-| c_ptr_eq : expr -> expr -> cmd
-| c_app : AST.ident -> list expr -> cmd
+| c_shift_fw_ptr : forall (e_ptr e_ofst: expr), cmd
+| c_shift_bw_ptr : forall (e_ptr e_ofst: expr), cmd
+| c_ptr_eq : forall (e_ptr_l e_ptr_r: expr), cmd
+| c_app : forall (f_id: AST.ident) (args: list expr), cmd
 .
 
 Fixpoint cmd_eqb (c1 c2: cmd): bool :=
@@ -60,124 +60,65 @@ Fixpoint cmd_eqb (c1 c2: cmd): bool :=
   | _, _ => false
   end.
 
-Lemma cmd_eq_dec: forall (x y: cmd), { x = y } + { x <> y }.
-Proof.
-  induction x;
-    destruct y;
-    (try (constructor; congruence));
-    (try (destruct (expr_eq_dec e0 e); constructor; congruence)).
-  - destruct (IHx1 y1); [ subst | right; congruence ].
-    destruct (IHx2 y2); [ subst | right; congruence ].
-    destruct (Pos.eq_dec i i0); [ subst | right; congruence ].
-    destruct (type_eq_dec t t0);
-      subst; constructor; congruence.
-  - destruct (IHx1 y1); [ subst | right; congruence ].
-    destruct (IHx2 y2); [ subst | right; congruence ].
-    destruct (expr_eq_dec e e0); constructor; congruence.
-  - destruct (IHx1 y1); [ subst | constructor; congruence ].
-    destruct (IHx2 y2); constructor; congruence.
-  - destruct (expr_eq_dec e e0); [ subst | right; congruence ].
-    destruct (IHx y); [ subst | right; congruence ].
-    destruct (type_eq_dec t t0); constructor; congruence.
-  - destruct (Nat.eq_dec n n0); [ subst | constructor; congruence ].
-    destruct (type_eq_dec t t0); constructor; congruence.
-  - destruct (Nat.eq_dec n n0); [ subst | constructor; congruence ].
-    destruct (type_eq_dec t t0); [ subst | constructor; congruence ].
-    destruct (expr_eq_dec e e0); constructor; congruence.
-  - destruct (expr_eq_dec e e1); [ subst | constructor; congruence ].
-    destruct (type_eq_dec t t0); [ subst | constructor; congruence ].
-    destruct (expr_eq_dec e0 e2); constructor; congruence.
-  - destruct (expr_eq_dec e e0); [ subst | constructor; congruence ].
-    destruct (type_eq_dec t t0); constructor; congruence.
-  - destruct (expr_eq_dec e e1); [ subst | constructor; congruence ].
-    destruct (type_eq_dec t t0); [ subst | constructor; congruence ].
-    destruct (expr_eq_dec e0 e2); constructor; congruence.
-  - destruct (expr_eq_dec e e1); [ subst | right; congruence ].
-    destruct (expr_eq_dec e0 e2); subst; constructor; congruence.
-  - destruct (expr_eq_dec e e1); [ subst | right; congruence ].
-    destruct (expr_eq_dec e0 e2); subst; constructor; congruence.
-  - destruct (expr_eq_dec e e1); [ subst | right; congruence ].
-    destruct (expr_eq_dec e0 e2); subst; constructor; congruence.
-  - destruct (Pos.eq_dec i i0); [ subst | constructor; congruence ].
-    destruct (List.list_eq_dec expr_eq_dec l l0); constructor; congruence.
-Qed.
-
-Lemma cmd_eqb_refl: forall c, cmd_eqb c c = true.
-Proof.
-  induction c;
-    cbn;
-    repeat
-      first
-      [ apply andb_true_intro
-      | split
-      | apply Nat.eqb_refl
-      | apply Pos.eqb_refl
-      | apply expr_eqb_refl
-      | apply expr_eqb_spec
-      | apply type_eqb_refl
-      | apply type_eqb_spec
-      | apply ReflectExt.eq_dec_refl_if
-      | apply ReflectExt.pair_eqb_refl
-      | apply ReflectExt.pair_eqb_spec
-      | apply ListExt.list_eqb_refl
-      | assumption
-      | reflexivity
-      ].
-Qed.
-
 Lemma cmd_eqb_spec: forall x y, Bool.reflect (x = y) (cmd_eqb x y).
 Proof.
   induction x;
     destruct y;
     cbn;
-    (try (constructor; now congruence));
+    (try (constructor; congruence));
     (try (destruct (expr_eqb_spec e e0); constructor; congruence)).
-  - destruct (Pos.eqb_spec i i0);
-      destruct (type_eqb_spec t t0);
+  - destruct (Pos.eqb_spec id_b id_b0);
+      destruct (type_eqb_spec t_b t_b0);
       destruct (IHx1 y1);
       destruct (IHx2 y2);
       subst; constructor; congruence.
-  - destruct (expr_eqb_spec e e0); [ subst; cbn | constructor; congruence ].
-    destruct (IHx1 y1); [ subst; cbn | constructor; congruence ].
-    destruct (IHx2 y2); constructor; congruence.
+  - destruct (expr_eqb_spec e_if e_if0);
+      destruct (IHx1 y1);
+      destruct (IHx2 y2);
+      subst; constructor; congruence.
   - destruct (IHx1 y1);
       destruct (IHx2 y2);
-      constructor;
-      congruence.
-  - destruct (type_eqb_spec t t0); [ subst; cbn | constructor; congruence ].
-    destruct (expr_eqb_spec e e0); [ subst; cbn | constructor; congruence ].
-    destruct (IHx y); constructor; congruence.
-  - destruct (Nat.eqb_spec n n0);
-      destruct (type_eqb_spec t t0);
-      constructor; congruence.
-  - destruct (Nat.eqb_spec n n0);
-      destruct (type_eqb_spec t t0);
-      destruct (expr_eqb_spec e e0);
       subst; constructor; congruence.
-  - destruct (expr_eqb_spec e e1);
-      destruct (expr_eqb_spec e0 e2);
-      destruct (type_eqb_spec t t0);
+  - destruct (type_eqb_spec t_v t_v0); [ subst; cbn | constructor; congruence ].
+    destruct (expr_eqb_spec e_v e_v0); [ subst; cbn | constructor; congruence ].
+    destruct (IHx y); constructor; congruence.
+  - destruct (Nat.eqb_spec o_v o_v0);
+      destruct (type_eqb_spec t_v t_v0);
       constructor; congruence.
-  - destruct (expr_eqb_spec e e0);
-      destruct (type_eqb_spec t t0);
+  - destruct (Nat.eqb_spec o_v o_v0);
+      destruct (type_eqb_spec t_v t_v0);
+      destruct (expr_eqb_spec e_v e_v0);
+      subst; constructor; congruence.
+  - destruct (expr_eqb_spec e_size e_size0);
+      destruct (type_eqb_spec t_init t_init0);
+      destruct (expr_eqb_spec e_init e_init0);
+      subst; constructor; congruence.
+  - destruct (expr_eqb_spec e_ptr e_ptr0);
+      destruct (type_eqb_spec t_val t_val0);
       constructor; congruence.
-  - destruct (type_eqb_spec t t0);
-      destruct (expr_eqb_spec e e1);
-      destruct (expr_eqb_spec e0 e2);
-      constructor;
-      congruence.
-  - destruct (expr_eqb_spec e e1);
-      destruct (expr_eqb_spec e0 e2);
+  - destruct (expr_eqb_spec e_ptr e_ptr0);
+      destruct (type_eqb_spec t_val t_val0);
+      destruct (expr_eqb_spec e_val e_val0);
+      subst; constructor; congruence.
+  - destruct (expr_eqb_spec e_ptr e_ptr0); constructor; congruence.
+  - destruct (expr_eqb_spec e_ptr e_ptr0);
+      destruct (expr_eqb_spec e_ofst e_ofst0);
       constructor; congruence.
-  - destruct (expr_eqb_spec e e1);
-      destruct (expr_eqb_spec e0 e2);
+  - destruct (expr_eqb_spec e_ptr e_ptr0);
+      destruct (expr_eqb_spec e_ofst e_ofst0);
       constructor; congruence.
-  - destruct (expr_eqb_spec e e1);
-      destruct (expr_eqb_spec e0 e2);
+  - destruct (expr_eqb_spec e_ptr_l e_ptr_l0);
+      destruct (expr_eqb_spec e_ptr_r e_ptr_r0);
       constructor; congruence.
-  - destruct (Pos.eqb_spec i i0);
-      destruct (ListExt.list_eqb_spec _ l l0 expr_eqb_spec);
+  - destruct (Pos.eqb_spec f_id f_id0);
+      destruct (ListExt.list_eqb_spec _ args args0 expr_eqb_spec);
       cbn; subst; constructor; congruence.
 Qed.
+
+Definition cmd_eq_dec: forall (x y: cmd), { x = y } + { x <> y } :=
+  ReflectExt.eq_dec_of_reflect cmd_eqb_spec.
+
+Definition cmd_eqb_refl: forall c, cmd_eqb c c = true :=
+  ReflectExt.reflect_refl cmd_eqb_spec.
 #[global] Hint Resolve cmd_eqb_refl: deep_gallinac.
 #[global] Hint Rewrite cmd_eqb_refl: deep_gallinac.

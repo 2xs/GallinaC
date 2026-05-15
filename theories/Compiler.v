@@ -1,3 +1,4 @@
+From MetaRocq.Template Require Export All.
 From GallinaC.Compiler.Reify Require Export Common Env Types Expr Cmd Prog.
 From GallinaC.Compiler.Common Require Export Types Expr Prog.
 From GallinaC.Compiler.Deep Require Export Cmd.
