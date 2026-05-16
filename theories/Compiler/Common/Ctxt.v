@@ -56,6 +56,13 @@ Definition get_global {P S GF GV} x (c: ctxt P S GF GV): option _ :=
   | Some b => Globalenvs.Genv.find_def (ctxt_global c) b
   | None => None
   end.
+
+Definition add_global [P S GF GV]
+  (ctx: ctxt P S GF GV)
+  (idg: AST.ident * AST.globdef GF GV)
+  : ctxt P S GF GV :=
+  with_global (Globalenvs.Genv.add_global (ctxt_global ctx) idg) ctx.
+
 (* Definition set_global {P S GF GV} x y (c: ctxt P S GF GV) := with_global (PTree.set x y (ctxt_global c)) c. *)
 Definition get_stack {P S GF GV} n (c: ctxt P S GF GV): option S := List.nth_error (ctxt_stack c) n.
 Definition set_stack {P S GF GV} n y (c: ctxt P S GF GV) := with_stack (ListExt.set_nth (ctxt_stack c) n y) c.
