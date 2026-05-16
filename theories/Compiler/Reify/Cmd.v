@@ -19,17 +19,6 @@ Polymorphic Fixpoint translate_args (renv: reify_funbody_env) (tms: list term): 
       tmEval cbv (arg::args)
   end.
 
-Definition add_2 (n: nat) := n + 2.
-Definition mul_3 (n: nat) := n * 3.
-Definition add_mul (n: nat) := add_2 (mul_3 n).
-
-Inductive ast: Set :=
-| Var: ast
-| Const: nat -> ast
-| Add: ast -> ast -> ast
-| Mul: ast -> ast -> ast
-.
-
 Polymorphic Fixpoint translate_cmd (renv: reify_funbody_env) (tm: term): TemplateMonad (cmd * reify_funbody_env) :=
   match tm with
   | tApp f args =>
@@ -217,6 +206,9 @@ Polymorphic Fixpoint translate_cmd (renv: reify_funbody_env) (tm: term): Templat
               args <- translate_args renv args ;;
               '(i, ef, renv) <- resolve_named_external renv kname;;
               tmEval cbv (c_app i args, renv)
+          | ImpPointerPointer | CoreInitDatatypes =>
+              tmPrint tm;;
+              tmFail "Invalid command"
           end
       | _ => tmFail "TODO3"
       end
