@@ -1,5 +1,5 @@
 From Stdlib Require Import Arith Psatz.
-From Stdlib Require Export List SetoidList.
+From Stdlib Require Export List SetoidList Sorting.Sorted.
 Export ListNotations.
 
 From compcert.lib Require Coqlib.
@@ -390,6 +390,14 @@ Section Bindings.
       induction HSBinds; constructor.
       now apply AbsBind_AbsIn.
       auto.
+    Qed.
+
+    Lemma SBinds_list_norepet [A B: Type] (l: list (A*B)):
+      SBinds l -> Coqlib.list_norepet (List.map fst l).
+    Proof.
+      induction 1; constructor; auto.
+      intros HIn; apply List.in_map_iff in HIn as ((?,?) & ? & ?); cbn in *; subst.
+      eapply AbsBind_In_False; eauto.
     Qed.
 
     Lemma SBinds_NoDupA_fst {A B: Type} {l: list (A*B)}
@@ -815,7 +823,63 @@ Section FoldLeft.
       FoldLeft P f acc (x :: rest)
   .
 
+  Fixpoint fold_left_b {A B: Type} (P_b: B -> A -> bool) (f: B -> A -> B)
+                       (acc: B) (l: list A) : bool :=
+    match l with
+    | [] => true
+    | x :: rest => P_b acc x && fold_left_b P_b f (f acc x) rest
+    end.
+
+  Lemma fold_left_b_spec {A B: Type} (P: B -> A -> Prop) (P_b: B -> A -> bool)
+    (P_spec: forall acc x, Bool.reflect (P acc x) (P_b acc x))
+    (f: B -> A -> B):
+    forall acc l, Bool.reflect (FoldLeft P f acc l) (fold_left_b P_b f acc l).
+  Proof.
+    intros acc l; revert acc.
+    induction l as [| x rest IH]; intros acc; cbn.
+    - apply ReflectT; constructor.
+    - destruct (P_spec acc x) as [HP | HnP]; cbn.
+      + destruct (IH (f acc x)) as [HF | HnF].
+        * apply ReflectT; now constructor.
+        * apply ReflectF; intros H; inversion H; contradiction.
+      + apply ReflectF; intros H; inversion H; contradiction.
+  Qed.
+
 End FoldLeft.
+
+Section SortedDec.
+
+  Fixpoint sorted_strict_b {A: Type} (ltb: A -> A -> bool) (l: list A) : bool :=
+    match l with
+    | [] => true
+    | x :: t =>
+        match t with
+        | [] => true
+        | y :: _ => ltb x y && sorted_strict_b ltb t
+        end
+    end.
+
+  Lemma sorted_strict_b_spec {A: Type} (lt: A -> A -> Prop) (ltb: A -> A -> bool)
+    (ltb_spec: forall x y, Bool.reflect (lt x y) (ltb x y)):
+    forall l, Bool.reflect (Sorted lt l) (sorted_strict_b ltb l).
+  Proof.
+    induction l as [| x t IH].
+    - apply ReflectT; constructor.
+    - destruct t as [| y rest].
+      + apply ReflectT; repeat constructor.
+      + cbn [sorted_strict_b].
+        apply Bool.iff_reflect.
+        rewrite Bool.andb_true_iff.
+        rewrite <- (Bool.reflect_iff _ _ (ltb_spec x y)).
+        rewrite <- (Bool.reflect_iff _ _ IH).
+        split.
+        * intros HS; inversion HS as [| ? ? Hsub Hhd]; subst.
+          inversion Hhd; subst; split; assumption.
+        * intros [Hlt HSt].
+          constructor; [exact HSt | constructor; exact Hlt].
+  Qed.
+
+End SortedDec.
 
 (* fold_left for failible operations *)
 Section FoldLeftOpt.

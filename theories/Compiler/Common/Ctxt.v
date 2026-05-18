@@ -84,4 +84,40 @@ Module Facts.
     reflexivity.
   Qed.
 
+  Lemma get_global_with_pure {P P' S GF GV: Type} (pure: map_ctxt P') (ctx: ctxt P S GF GV) id:
+    get_global id (with_pure pure ctx) = get_global id ctx.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma get_global_with_stack {P S S' GF GV: Type} (st: list S') (ctx: ctxt P S GF GV) id:
+    get_global id (with_stack st ctx) = get_global id ctx.
+  Proof.
+    reflexivity.
+  Qed.
+
+  Lemma get_global_add_global_neq [P S GF GV] (ctx: ctxt P S GF GV) idg id
+    (Hneq: fst idg <> id):
+    get_global id (add_global ctx idg) = get_global id ctx.
+  Proof.
+    destruct idg as [id' g]; cbn in Hneq.
+    unfold get_global, add_global, with_global; cbn.
+    unfold Globalenvs.Genv.find_symbol, Globalenvs.Genv.find_def, Globalenvs.Genv.add_global; cbn.
+    rewrite PTree.gso by (intros ?; subst; congruence).
+    destruct (PTree.get id (Globalenvs.Genv.genv_symb (ctxt_global ctx))) as [b|] eqn:Hsym;
+      [| reflexivity ].
+    rewrite PTree.gso; [ reflexivity |].
+    apply Coqlib.Plt_ne.
+    eapply (Globalenvs.Genv.genv_symb_range (ctxt_global ctx)); eassumption.
+  Qed.
+
+  Lemma get_global_add_global_eq [P S GF GV] (ctx: ctxt P S GF GV) id g:
+    get_global id (add_global ctx (id, g)) = Some g.
+  Proof.
+    unfold get_global, add_global, with_global; cbn.
+    unfold Globalenvs.Genv.find_symbol, Globalenvs.Genv.find_def, Globalenvs.Genv.add_global; cbn.
+    rewrite PTree.gss, PTree.gss.
+    reflexivity.
+  Qed.
+
 End Facts.

@@ -684,13 +684,13 @@ Section Typing.
   Record wt_env (f: function) (ty_env: map_ctxt (type * bool)) (val_env: env): Type :=
     {
       wt_val_env: forall var_id t,
-        In (var_id,t) f.(fn_temps) ->
+        In (var_id,t) (f.(fn_params) ++ f.(fn_temps)) ->
         { t &
           match PTree.get var_id val_env with
           | Some v => wt_value v t + (PTree.get var_id ty_env = Some (t,true))
           | None => PTree.get var_id ty_env = Some (t, false)
           end };
-      wv_ty_env: forall var_id t b, PTree.get var_id ty_env = Some (t, b) -> (if b then { v & PTree.get var_id val_env = Some v & wt_value v t } else PTree.get var_id val_env = None) * In (var_id,t) f.(fn_temps);
+      wv_ty_env: forall var_id t b, PTree.get var_id ty_env = Some (t, b) -> (if b then { v & PTree.get var_id val_env = Some v & wt_value v t } else PTree.get var_id val_env = None) * In (var_id,t) (f.(fn_params) ++ f.(fn_temps));
     }.
 
   (* Continuations can be viewed as functions with type t -> k, where

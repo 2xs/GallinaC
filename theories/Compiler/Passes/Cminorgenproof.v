@@ -785,7 +785,9 @@ Section TRANSLATION_HELPER.
             specialize (ListExt.SBinds_map_fst_SIns SBinds_temps) as SIns_temps.
             specialize (ListExt.SIns_In SIns_temps contra) as SIn_ident.
             specialize (ListExt.SIn_map_fst_SBindIn SBinds_temps SIn_ident) as (t & SBindIn).
-            eapply (ListExt.Forall_forall_l Disjoint_tl).
+            pose proof (Disjoint_tl_fwd :=
+              fun x Hx => (proj1 (List.Forall_forall _ _) Disjoint_tl x Hx));
+              eapply Disjoint_tl_fwd.
             eapply ListExt.BindIn_In, ListExt.SBindIn_BindIn; eauto.
             exists (ident, t).
             split; [ now eapply ListExt.BindIn_In, ListExt.SBindIn_BindIn | auto ].
@@ -978,7 +980,8 @@ Section TRANSLATION.
       + exact FINDfunct_ptr'.
       + rewrite Lemmas.signature_main;
           eapply sig_preserved_match; eassumption.
-    - destruct WTprog as [ WTdefs INpublic [fd_main INmain] SBINDSdefs SORTEDpublic [ INmalloc INfree ] ].
+    - pose proof (WTdefs := Prog.Facts.wt_prog_defs_Forall Typing.wt_cmd_mono _ WTprog).
+      destruct WTprog as [ _ INpublic [fd_main INmain] SBINDSdefs SORTEDpublic [ INmalloc INfree ] ].
       specialize (proj1 (Forall_forall _ _) WTdefs _ INmain) as WTmain;
         cbn in WTmain.
       inversion WTmain as [ ?ctx ?id ?f WTfmain | ]; subst.
@@ -1274,7 +1277,7 @@ Section TRANSLATION.
       specialize TF as TFB.
       apply bind_inversion in TF as ( tbody & TC & TF ).
       inversion TF; subst; clear TF.
-      specialize (wt_fn_cmd _ _ _ _ _ WTf) as WTbody.
+      specialize (wt_fn_cmd WTf) as WTbody.
       assert (WTinj: CCInj.wf s m inj) by (now inversion WT).
       assert (SBinds_temps: ListExt.SBinds fn.(fn_temps)) by (now inversion WTf).
       specialize

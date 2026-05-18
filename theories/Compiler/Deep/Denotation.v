@@ -1,10 +1,10 @@
-From Stdlib Require Import Psatz Arith NArith.
+From Stdlib Require Import Psatz Arith NArith ZArith Bool.
 
 From GallinaC.Utils Require Import ListExt PTreeExt.
 From GallinaC.Imp Require Export Monad Primitives Pointer Intops Uint32 Uintptr.
 Import Unsigned.Notations.
 From GallinaC.Compiler.Common Require Export Types Ctxt Expr CCInj.
-From GallinaC.Compiler.Deep Require Import Cmd Prog OpSem(state, step) Typing.
+From GallinaC.Compiler.Deep Require Import Cmd Prog OpSem(state, step, cont) Typing.
 Import OpSem.Typing(wt_state).
 
 From Corelib Require Derive.
@@ -90,6 +90,81 @@ Section State.
     | Maps.PTree.Nodes ctx => denote_map' denote ctx
     end.
 
+  Definition denote_map_lookup [A: Type] (denote: A -> Type)
+    {m: Maps.PTree.t A}:
+    forall {id} {a}
+           (GET: Maps.PTree.get id m = Some a)
+           (d_m: denote_map denote m),
+      denote a.
+  Proof using St Hp.
+    induction m using Maps.PTree.tree_ind; [ intros id a GET; discriminate GET | ].
+    intros id a GET d_m.
+    rewrite Maps.PTree.gNode in GET.
+    destruct id.
+    - eapply IHm0; [ exact GET | ].
+      destruct l, o, r; cbn in d_m;
+        try (now constructor);
+        try (exact (snd d_m));
+        try (exact d_m).
+    - eapply IHm; [ exact GET | ].
+      destruct l, o, r; cbn in d_m;
+        try (now constructor);
+        try (exact (fst d_m));
+        try (exact (fst (fst d_m)));
+        try (exact d_m).
+    - subst o.
+      destruct l, r; cbn in d_m.
+      exact d_m.
+      exact (fst d_m).
+      exact (snd d_m).
+      exact (snd (fst d_m)).
+  Defined.
+
+  Definition denote_map_of_lookup [A: Type] (denote: A -> Type)
+    (m: Maps.PTree.t A)
+    (lookup: forall id a, Maps.PTree.get id m = Some a -> denote a)
+    : denote_map denote m.
+  Proof using St Hp.
+    revert lookup.
+    induction m using Maps.PTree.tree_ind; intros lookup.
+    - exact tt.
+    - assert (lookup_l: forall id a, Maps.PTree.get id l = Some a -> denote a).
+      { intros id a GET. apply (lookup (id~0)%positive a). rewrite Maps.PTree.gNode; assumption. }
+      assert (lookup_r: forall id a, Maps.PTree.get id r = Some a -> denote a).
+      { intros id a GET. apply (lookup (id~1)%positive a). rewrite Maps.PTree.gNode; assumption. }
+      assert (lookup_h: forall a, o = Some a -> denote a).
+      { intros a EQ. apply (lookup xH a). rewrite Maps.PTree.gNode; assumption. }
+      specialize (IHm lookup_l); specialize (IHm0 lookup_r).
+      clear lookup lookup_l lookup_r.
+      destruct l, o as [ a_o | ], r; cbn in *;
+        first
+          [ exact tt
+          | exact (lookup_h a_o eq_refl)
+          | exact IHm
+          | exact IHm0
+          | exact (IHm, IHm0)
+          | exact (lookup_h a_o eq_refl, IHm0)
+          | exact (IHm, lookup_h a_o eq_refl)
+          | exact (IHm, lookup_h a_o eq_refl, IHm0)
+          ].
+  Defined.
+
+  Definition denote_map_set [A: Type] (denote: A -> Type)
+    (i: positive) (a: A) (d_a: denote a)
+    (m: Maps.PTree.t A) (d_m: denote_map denote m)
+    : denote_map denote (Maps.PTree.set i a m).
+  Proof using St Hp.
+    apply (denote_map_of_lookup denote (Maps.PTree.set i a m)).
+    intros id b GET.
+    destruct (Pos.eq_dec id i) as [ EQ | NE ].
+    - subst id.
+      rewrite Maps.PTree.gss in GET.
+      injection GET as <-.
+      exact d_a.
+    - rewrite Maps.PTree.gso in GET by assumption.
+      exact (denote_map_lookup denote GET d_m).
+  Defined.
+
   Fixpoint denote_pure_ctxt' (ctx: Maps.PTree.tree' (type * bool)): Type :=
     match ctx with
     | Maps.PTree.Node001 r => denote_pure_ctxt' r
@@ -134,18 +209,13 @@ Section State.
   Definition denote_ctxt (ctx: ctxt (type * bool) unit fundef vardef): Type :=
     (denote_pure_ctxt ctx * denote_stack_ctxt ctx.(ctxt_stack) * denote_glob_ctxt ctx.(ctxt_global))%type.
 
-  (* Definition denote_ctxt (ctxt: map_ctxt (type * bool)): Type := *)
-  (*   Maps.PTree.fold add_to_denote_ctxt ctxt unit. *)
-    (* List.fold_right add_to_denote_ctxt unit (Maps.PTree.elements ctxt). *)
-  (* Definition denote_ctxt (ctxt: ctxt (type * bool) Empty_set fundef vardef): Type := denote_pure_ctxt ctxt. *)
-
   Definition denote_pure_ctxt_lookup:
     forall {ctx: map_ctxt (type * bool)} {v t}
     (GET: Maps.PTree.get v ctx = Some (t, true))
     (env: denote_pure_ctxt ctx),
       denote_type t.
   Proof using St Hp.
-    induction ctx using Maps.PTree.tree_ind; [ intros v t H; discriminate H | ].
+    induction ctx using Maps.PTree.tree_ind; [ intros; discriminate | ].
     intros v t GET env.
     rewrite Maps.PTree.gNode in GET.
     destruct v.
@@ -316,7 +386,94 @@ Section State.
     | wt_nat_eq WTl WTr => (denote_expr WTl env =? denote_expr WTr env)
     end.
 
-  (* Definition denote_function {ctxt: Globalenvs.Genv.t fundef vardef} (f: function): denote_type (t_fun (List.map snd f.(fn_params)) (f.(fn_return))). *)
+  Definition denote_value (v: Value.value) : denote_type (Value.type_of_value v) :=
+    match v with
+    | Value.v_tt => tt
+    | Value.v_bool b => b
+    | Value.v_nat n => n
+    | Value.v_ofst o => o
+    | Value.v_ptr p => p
+    end.
+
+  Definition convert_eq [A B: Type] (EQ: A = B) (a : A) : B :=
+    match EQ with eq_refl => a end.
+
+  Definition denote_value_typed {v t} (WT: Value.wt_value v t) : denote_type t :=
+    convert_eq (f_equal denote_type (Value.Facts.type_of_value_complete WT)) (denote_value v).
+
+  Definition denote_pure_ctxt_of_lookup
+    (ctx: map_ctxt (type * bool))
+    (lookup: forall id t, Maps.PTree.get id ctx = Some (t, true) -> denote_type t)
+    : denote_pure_ctxt ctx.
+  Proof using St Hp.
+    revert lookup.
+    induction ctx using Maps.PTree.tree_ind; intros lookup.
+    - exact tt.
+    - assert (lookup_l: forall id t, Maps.PTree.get id l = Some (t, true) -> denote_type t).
+      {
+        intros id t Hget.
+        apply (lookup (id~0)%positive t).
+        rewrite Maps.PTree.gNode; exact Hget.
+      }
+      assert (lookup_r: forall id t, Maps.PTree.get id r = Some (t, true) -> denote_type t).
+      {
+        intros id t Hget.
+        apply (lookup (id~1)%positive t).
+        rewrite Maps.PTree.gNode; exact Hget.
+      }
+      specialize (IHctx lookup_l).
+      specialize (IHctx0 lookup_r).
+      assert (lookup_h: forall t, o = Some (t, true) -> denote_type t).
+      {
+        intros t Heq.
+        apply (lookup xH t).
+        rewrite Maps.PTree.gNode; cbn; exact Heq.
+      }
+      clear lookup lookup_l lookup_r.
+      destruct l, o as [ [ t_o [ | ] ] | ], r; cbn in *;
+        first
+          [ exact tt
+          | exact (lookup_h t_o eq_refl)
+          | exact IHctx
+          | exact IHctx0
+          | exact (IHctx, IHctx0)
+          | exact (lookup_h t_o eq_refl, IHctx0)
+          | exact (IHctx, lookup_h t_o eq_refl)
+          | exact (IHctx, lookup_h t_o eq_refl, IHctx0)
+          ].
+  Defined.
+
+  Definition denote_pure_ctxt_of_env
+    {f: function} {ty_env: map_ctxt (type * bool)} {val_env: map_ctxt Value.value}
+    (WT: OpSem.Typing.wt_env f ty_env val_env)
+    : denote_pure_ctxt ty_env :=
+    denote_pure_ctxt_of_lookup ty_env (fun id t Hget =>
+      match OpSem.Typing.wv_ty_env _ _ _ WT id t true Hget with
+      | (existT2 _ _ _ _ Hwt, _) => denote_value_typed Hwt
+      end).
+
+  Fixpoint denote_stack_ctxt_of_locals (locals: list (@Store.name St))
+    : denote_stack_ctxt (List.map (fun _: @Store.name St => tt) locals) :=
+    match locals with
+    | [] => tt
+    | nm :: locals' => (denote_stack_ctxt_of_locals locals', nm)
+    end.
+
+  Fixpoint denote_function_loop (targs: list type) (tout: type)
+    : denote_type_list denote_type targs (denote_type tout) :=
+    match targs with
+    | [] => Monad.loop
+    | t :: rest =>
+        fun _: denote_type t => denote_function_loop rest tout
+    end.
+
+  (* Stub for now *)
+  Definition denote_function
+    {ctx: ctxt Empty_set Empty_set fundef vardef} {fn: function}
+    (_: wt_function ctx fn)
+    (_: denote_glob_ctxt ctx.(ctxt_global))
+    : denote_type (t_fun (List.map snd fn.(fn_params)) fn.(fn_return))
+    := denote_function_loop (List.map snd fn.(fn_params)) fn.(fn_return).
 
   Definition denote_app {ctxt: ctxt (type * bool) unit fundef vardef} {fn: Deep.Prog.function} {args: list expr}
     (d_fn: denote_type (t_fun (List.map snd fn.(fn_params)) (fn.(fn_return))))
@@ -386,23 +543,205 @@ Section State.
           write_var (MS := denote_type_memval GROUND) (denote_ctxt_lookup_stack NTH env) (convert (denote_types_agree GROUND) (denote_expr WTval (fst (fst env))))
     end.
 
-  (* Definition denote_function *)
-  (*   {ctxt} {fn} *)
-  (*   (WT: wt_function ctxt fn) *)
-  (*   : denote_type (t_fun (List.map snd fn.(fn_params)) fn.(fn_return)). *)
-  (*   destruct WT. *)
-  (*   Definition denote_function' {ctxt params} *)
-  (*     (WT_params: . *)
-
   Axiom TODO: forall {A: Type}, A.
+
+  Definition denote_glob_ctxt_empty (pub: list AST.ident)
+    : denote_glob_ctxt (Globalenvs.Genv.empty_genv fundef vardef pub) := tt.
+
+  (* Extend an existing denote_glob_ctxt with one more (id, gd) entry. *)
+  Definition denote_glob_ctxt_extend
+    (ge: genv) (id: AST.ident) (gd: globdef)
+    (d_gd: denote_globdef gd)
+    (glob: denote_glob_ctxt ge)
+    : denote_glob_ctxt (Globalenvs.Genv.add_global ge (id, gd))
+    := denote_map_set denote_globdef
+         (Globalenvs.Genv.genv_next ge) gd d_gd
+         (Globalenvs.Genv.genv_defs ge) glob.
+
+  Definition denote_init_data_value
+    (init: list AST.init_data) (t: type)
+    (EQ: type_init_data init t = true) : denote_type t.
+  Proof.
+    destruct t.
+    - exact tt.
+    - destruct init as [|i1 init1]; [discriminate|].
+      destruct i1; try discriminate.
+      destruct init1 as [|i2 init2]; [discriminate|].
+      destruct i2; try discriminate.
+      destruct init2; [|discriminate].
+      exact (Z.eqb (Integers.Int.unsigned i) 1%Z).
+    - destruct init as [|i1 init1]; [discriminate|].
+      destruct i1; try discriminate.
+      destruct init1 as [|i2 init2]; [discriminate|].
+      destruct i2; try discriminate.
+      destruct init2; [|discriminate].
+      exact (Z.to_nat (Integers.Int.unsigned i)).
+    - discriminate.
+    - destruct init as [|i1 init1]; [discriminate|].
+      destruct i1; try discriminate.
+      all: destruct init1; [ exact Pointer.NULL | discriminate ].
+    - discriminate.
+  Defined.
+
+  (* Stub for now *)
+  Definition denote_external_function (ef: AST.external_function)
+    (H: type_external_function ef = true)
+    : match Facts.ef_sig_dec ef with
+      | Some sig => denote_type (t_fun sig.(sig_args) sig.(sig_res))
+      | None => Empty_set
+      end.
+  Proof.
+    unfold type_external_function in H.
+    destruct (Facts.ef_sig_dec ef) as [sig|]; [| discriminate].
+    exact (denote_function_loop sig.(sig_args) sig.(sig_res)).
+  Defined.
+
+  (* Denote any kind of globdef *)
+  Definition denote_globdef_value
+    (ctx: ctxt Empty_set Empty_set fundef vardef)
+    (id: AST.ident) (gd: globdef)
+    (H: type_globdef ctx id gd = true)
+    (glob: denote_glob_ctxt ctx.(ctxt_global))
+    : denote_globdef gd.
+  Proof.
+    destruct gd as [f | v]; cbn [denote_globdef].
+    - destruct f as [fn | ef];
+        unfold type_globdef, Prog.type_globdef, type_fundef, Prog.type_fundef in H.
+      + (* Internal fn *)
+        refine (denote_function (fn := fn) _ glob).
+        apply type_function_correct. exact H.
+      + (* External ef *)
+        exact (denote_external_function ef H).
+    - (* Gvar v *)
+      unfold type_globdef, Prog.type_globdef, type_globvar, Prog.type_globvar in H.
+      apply Bool.andb_true_iff in H as [H _].
+      apply Bool.andb_true_iff in H as [H _].
+      apply Bool.andb_true_iff in H as [_ H].
+      destruct v as [vinfo vinit vread vvol]; cbn in *.
+      destruct vinfo as [t]; cbn in *.
+      exact (denote_init_data_value vinit t H).
+  Defined.
+
+  (* Denote the program, denoting the globdefs in order and adding them to the environment one-by-one *)
+  Fixpoint denote_prog_defs_fold (defs: list (AST.ident * globdef))
+    (ctx: ctxt Empty_set Empty_set fundef vardef)
+    (H: type_prog_defs ctx defs = true)
+    (glob: denote_glob_ctxt ctx.(ctxt_global))
+    {struct defs}
+    : denote_glob_ctxt
+        (List.fold_left
+           (fun ge idg => Globalenvs.Genv.add_global ge idg)
+           defs ctx.(ctxt_global)).
+  Proof.
+    destruct defs as [|[id gd] rest]; cbn in *.
+    - exact glob.
+    - unfold type_prog_defs, Prog.type_prog_defs in H. cbn in H.
+      apply Bool.andb_true_iff in H as [Hgd Hrest].
+      pose (gd_val := denote_globdef_value ctx id gd Hgd glob).
+      pose (glob1 := denote_glob_ctxt_extend ctx.(ctxt_global) id gd gd_val glob).
+      exact (denote_prog_defs_fold rest
+               (Ctxt.add_global ctx (id, gd)) Hrest glob1).
+  Defined.
+
+  Definition denote_glob_ctxt_of_program
+    (p: Prog.program) (WTp: wt_program p)
+    : denote_glob_ctxt (Globalenvs.Genv.globalenv p).
+  Proof.
+    pose proof (proj1 (Bool.reflect_iff _ _ (type_program_spec p)) WTp) as Hbool.
+    unfold type_program, Prog.type_program in Hbool.
+    apply Bool.andb_true_iff in Hbool as [Hbool _].
+    apply Bool.andb_true_iff in Hbool as [Hbool _].
+    apply Bool.andb_true_iff in Hbool as [Hbool _].
+    apply Bool.andb_true_iff in Hbool as [Hbool _].
+    apply Bool.andb_true_iff in Hbool as [Hdefs _].
+    unfold Globalenvs.Genv.globalenv, Globalenvs.Genv.add_globals.
+    refine (denote_prog_defs_fold p.(prog_defs)
+              (ctxt_emp _ _ _ _ p.(prog_public)) _ _).
+    - exact Hdefs.
+    - cbn. apply denote_glob_ctxt_empty.
+  Defined.
+
+  (* Because continuations are a mutual inductive, their denotation is a mutual fixpoint *)
+  Fixpoint denote_cont
+    {ctx} {k: @cont St} {t}
+    (WT: @OpSem.Typing.wt_cont St ctx k t)
+    (env: denote_pure_ctxt ctx)
+    (stack: denote_stack_ctxt ctx.(ctxt_stack))
+    (glob: denote_glob_ctxt ctx.(ctxt_global))
+    (v: denote_type t)
+    {struct WT}
+    : Monad.program (State St Hp) nat
+  with denote_cont_call
+    {ctx} {k: @cont St} {t}
+    (WT: @OpSem.Typing.wt_cont_call St ctx k t)
+    (glob: denote_glob_ctxt ctx.(ctxt_global))
+    (v: denote_type t)
+    {struct WT}
+    : Monad.program (State St Hp) nat.
+  Proof using St Hp.
+    - (* denote_cont *)
+      destruct WT as
+        [ ctx' id c' k' t_b t_c Hget Hwt_c Hwt_k
+        | ctx' c_cond c_body k' Hwt_cond Hwt_body Hwt_k
+        | ctx' c_cond c_body k' Hwt_cond Hwt_body Hwt_k
+        | ctx' k' tret Hwt_cc
+        ]; cbn in *.
+      + (* Kbind: rebind v as id, run c, thread result through k *)
+        exact (do v' <- denote_cmd Hwt_c (denote_ctxt_set_pure Hget (env, stack, glob) v);
+               denote_cont _ _ _ Hwt_k env stack glob v').
+      + (* Kloop1: input is bool *)
+        exact
+          (if v
+           then
+             do _ <- denote_cmd Hwt_body (env, stack, glob);
+             do _ <- while
+                       (denote_cmd Hwt_cond (env, stack, glob))
+                       (denote_cmd Hwt_body (env, stack, glob));
+             denote_cont _ _ _ Hwt_k env stack glob tt
+           else denote_cont _ _ _ Hwt_k env stack glob tt).
+      + (* Kloop2: input is unit *)
+        exact
+          (do _ <- while
+                     (denote_cmd Hwt_cond (env, stack, glob))
+                     (denote_cmd Hwt_body (env, stack, glob));
+           denote_cont _ _ _ Hwt_k env stack glob tt).
+      + (* wt_cont_other: forward to denote_cont_call; pure/stack envs dropped *)
+        exact (denote_cont_call _ _ _ Hwt_cc glob v).
+    - (* denote_cont_call *)
+      destruct WT as
+        [ ctx'
+        | ctx' f e locals k' t' ty_env Hwt_fn Hwt_env Hwt_k
+        ]; cbn in *.
+      + (* Kstop: v : nat, return it *)
+        exact (ret v).
+      + (* Kcall: rebuild caller env from Hwt_env and locals, forward to denote_cont *)
+        pose (caller_env := denote_pure_ctxt_of_env Hwt_env).
+        pose (caller_stack := denote_stack_ctxt_of_locals locals).
+        exact (denote_cont _ _ _ Hwt_k caller_env caller_stack glob v).
+  Defined.
 
   Definition denote_state {p: Prog.program} {s: @state St Hp}
     (WTp: wt_program p) (WTs: wt_state p s)
-    : Monad.program (State St Hp) nat :=
-    match s with
-    | OpSem.State f c k env locals s => TODO
-    | OpSem.Callstate f args k s => TODO
-    | OpSem.Returnstate v k s => TODO
-    end.
+    : Monad.program (State St Hp) nat.
+  Proof using St Hp.
+    pose (glob := denote_glob_ctxt_of_program p WTp).
+    destruct WTs as
+      [ f c k env_v locals s' ctx t Hwt_State
+      | f args k s' sig ctx Hwt_fundef Hwt_args Hsig Hwt_cont
+      | v k s' ctx t Hwt_res Hwt_cont
+      ].
+    - destruct Hwt_State as
+        [ State_wt_function State_wt_cmd State_wt_cont State_wt_env State_wt_stack ].
+      pose (env_pure := denote_pure_ctxt_of_env State_wt_env).
+      assert (stack_d : denote_stack_ctxt ctx.(ctxt_stack)).
+      {
+        rewrite State_wt_stack.
+        exact (denote_stack_ctxt_of_locals locals).
+      }
+      exact (do v <- denote_cmd State_wt_cmd (env_pure, stack_d, TODO);
+             denote_cont State_wt_cont env_pure stack_d TODO v).
+    - exact TODO.
+    - exact (denote_cont Hwt_cont TODO TODO TODO (denote_value_typed Hwt_res)).
+  Defined.
 
 End State.

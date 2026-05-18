@@ -332,3 +332,67 @@ Definition wt_globvar := wt_globvar cmd f_extra.
 Definition wt_globdef := wt_globdef f_extra wt_f_extra wt_cmd.
 
 Definition wt_program := wt_program wt_f_extra wt_cmd wt_p_extra.
+Definition type_function := Prog.type_function (cmd := cmd) (f_extra := f_extra) type_cmd (fun _ => true).
+Definition type_fundef := Prog.type_fundef (cmd := cmd) (f_extra := f_extra) type_cmd (fun _ => true).
+Definition type_globvar := Prog.type_globvar (cmd := cmd) (f_extra := f_extra).
+Definition type_globdef := Prog.type_globdef (cmd := cmd) (f_extra := f_extra) type_cmd (fun _ => true).
+Definition type_prog_defs := Prog.type_prog_defs (cmd := cmd) (f_extra := f_extra) type_cmd (fun _ => true).
+Definition type_program := Prog.type_program (cmd := cmd) (f_extra := f_extra) (p_extra := p_extra) type_cmd (fun _ => true) (fun _ => true).
+
+Lemma wt_f_extra_complete (fx: f_extra): wt_f_extra fx -> (fun _: f_extra => true) fx = true.
+Proof. reflexivity. Qed.
+
+Lemma wt_f_extra_correct (fx: f_extra): (fun _: f_extra => true) fx = true -> wt_f_extra fx.
+Proof. intros _; exact I. Qed.
+
+Lemma wt_p_extra_spec (p: program): Bool.reflect (wt_p_extra p) ((fun _: program => true) p).
+Proof. apply ReflectT; exact I. Qed.
+
+Lemma type_function_correct ctx func:
+  type_function ctx func = true -> wt_function ctx func.
+Proof.
+  apply Prog.type_function_correct;
+    [ apply type_cmd_correct | apply wt_f_extra_correct ].
+Qed.
+
+Lemma type_function_complete ctx func:
+  wt_function ctx func -> type_function ctx func = true.
+Proof.
+  apply Prog.type_function_complete;
+    [ apply type_cmd_complete | apply wt_f_extra_complete ].
+Qed.
+
+Lemma type_fundef_correct ctx fd:
+  type_fundef ctx fd = true -> wt_fundef ctx fd.
+Proof.
+  apply Prog.type_fundef_correct;
+    [ apply type_cmd_correct | apply wt_f_extra_correct ].
+Qed.
+
+Lemma type_fundef_complete ctx fd:
+  wt_fundef ctx fd -> type_fundef ctx fd = true.
+Proof.
+  apply Prog.type_fundef_complete;
+    [ apply type_cmd_complete | apply wt_f_extra_complete ].
+Qed.
+
+Lemma type_globvar_spec ctx id gv:
+  Bool.reflect (wt_globvar ctx id gv) (type_globvar ctx id gv).
+Proof. apply Prog.type_globvar_spec. Qed.
+
+Lemma type_globdef_spec ctx id gd:
+  Bool.reflect (wt_globdef ctx id gd) (type_globdef ctx id gd).
+Proof.
+  apply Prog.type_globdef_spec;
+    [ apply type_cmd_complete | apply type_cmd_correct
+    | apply wt_f_extra_complete | apply wt_f_extra_correct ].
+Qed.
+
+Lemma type_program_spec p:
+  Bool.reflect (wt_program p) (type_program p).
+Proof.
+  apply Prog.type_program_spec;
+    [ apply type_cmd_complete | apply type_cmd_correct
+    | apply wt_f_extra_complete | apply wt_f_extra_correct
+    | apply wt_p_extra_spec ].
+Qed.
