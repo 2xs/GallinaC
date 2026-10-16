@@ -1,10 +1,29 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
 From Stdlib Require Import String ZArith ssrfun.
 
 From GallinaC.Utils Require Import ListExt.
 
-From GallinaC.Imp Require Import Heap Store.
+From GallinaC.Imp Require Import Heap Store Value.
 
 From GallinaC.Compiler.Common Require Import CCInj Types Expr.
+From GallinaC.Compiler.IR Require Typing.
 From GallinaC.Compiler.IR Require Import Cmd Prog.
 
 From compcert.common Require Import Errors.
@@ -13,14 +32,6 @@ From compcert.lib Require Maps.
 From compcert.lib Require Import Integers.
 
 Local Open Scope error_monad_scope.
-
-(* Local Notation "'do' 'assertion' A ; B" := (if A then B else assertion_failed) *)
-(*                                              (at level 200, A at level 100, B at level 200) *)
-(*     : error_monad_scope. *)
-
-Local Notation "'do' 'assert' A 'with' fail_msg ; B" := (if A then B else Error (msg fail_msg))
-                                                          (at level 200, A at level 100, B at level 200)
-    : error_monad_scope.
 
 (* Return in IR and in Cminor are very different.
  * In IR, return simply terminates a command and produces a pure value
@@ -31,13 +42,6 @@ Local Notation "'do' 'assert' A 'with' fail_msg ; B" := (if A then B else Error 
  * - If the stack is empty, we are at the top of the function, and can actually call a Cminor return
  * - Otherwise, we must assign to the bound variable (which is a temporary actually)
  *)
-Record compilenv :=
-  mkcompilenv
-    {
-      temps: list (AST.ident * type);
-      id_malloc: option AST.ident;
-      id_free: option AST.ident;
-    }.
 
 Definition make_int (n: nat): Cminor.expr :=
   Cminor.Econst (Cminor.Ointconst (Int.repr (Z.of_nat n))).
@@ -52,7 +56,7 @@ Definition make_nullptr: Cminor.expr :=
   else
     Cminor.Econst (Cminor.Ointconst Int.zero).
 
-Definition make_size_t (n: N.t): Cminor.expr :=
+Definition make_ofst (n: N.t): Cminor.expr :=
   if Archi.ptr64 then
     Cminor.Econst (Cminor.Olongconst (Int64.repr (Z.of_N n)))
   else
@@ -68,11 +72,23 @@ Definition make_nat_add (l r: Cminor.expr): Cminor.expr :=
 Definition make_nat_eq (l r: Cminor.expr): Cminor.expr :=
   Cminor.Ebinop (Cminor.Ocmpu Ceq) l r.
 
+Definition make_nat_mul (l r: Cminor.expr): Cminor.expr :=
+  Cminor.Ebinop Cminor.Omul l r.
+
+Definition make_nat_div (l r: Cminor.expr): Cminor.expr :=
+  Cminor.Ebinop Cminor.Odivu l r.
+
+Definition make_nat_mod (l r: Cminor.expr): Cminor.expr :=
+  Cminor.Ebinop Cminor.Omodu l r.
+
 Definition make_nat_lt (l r: Cminor.expr): Cminor.expr :=
   Cminor.Ebinop (Cminor.Ocmpu Clt) l r.
 
 Definition make_ofst_lt (l r: Cminor.expr): Cminor.expr :=
-  Cminor.Ebinop (Cminor.Ocmplu Clt) l r.
+  if Archi.ptr64 then
+    Cminor.Ebinop (Cminor.Ocmplu Clt) l r
+  else
+    Cminor.Ebinop (Cminor.Ocmpu Clt) l r.
 
 Definition ofst_add_op: Cminor.binary_operation :=
   if Archi.ptr64 then
@@ -94,13 +110,13 @@ Definition make_ofst_add (l r: Cminor.expr): Cminor.expr :=
 (* Before each operation, we adjust them to be the correct value *)
 Definition adjust_offset (n: Cminor.expr): Cminor.expr :=
   if Archi.ptr64 then
-    Cminor.Ebinop Cminor.Omull n (make_size_t (N.of_nat memval_memsize))
+    Cminor.Ebinop Cminor.Omull n (make_ofst (N.of_nat memword_bytes))
   else
-    Cminor.Ebinop Cminor.Omul n (make_size_t (N.of_nat memval_memsize)).
+    Cminor.Ebinop Cminor.Omul n (make_ofst (N.of_nat memword_bytes)).
 
 Definition make_array_ofst := adjust_offset.
 
-Definition make_size_from_count := adjust_offset.
+Definition make_ofst_from_count := adjust_offset.
 
 Definition ptr_shift_fw_op: Cminor.binary_operation := ofst_add_op.
 
@@ -118,70 +134,25 @@ Definition make_ptr_eq (p1 p2: Cminor.expr): Cminor.expr :=
   else
     Cminor.Ebinop (Cminor.Ocmpu Ceq) p1 p2.
 
-
 (* Translates an expression *)
-(* Assumes the expression is well-typed *)
-(* Unsized-values are a failure case *)
-Fixpoint transl_expr_maybe_sized cenv e t {struct e}: res (option (Cminor.expr * AST.memory_chunk)) :=
-  match e, t with
-  | e_var id, t =>
-      match SetoidList.findA (Pos.eqb id) cenv.(temps) with
-      | Some t' =>
-          if type_eqb t' t
-          then
-            match type_mem_chunk t with
-            | Some mc => OK (Some (Cminor.Evar id, mc))
-            | None => OK None
-            end
-          else
-            Error [ MSG "Identifier type mismatch" ]
-      | None => Error [ MSG "Unbound identifier"; POS id ]
-      end
-  | e_tt, t_unit => OK None
-  | e_bool b, t_bool => OK (Some (make_bool b, AST.Mbool))
-  | e_nat n, t_nat => OK (Some (make_int n, AST.Mint32))
-  | e_ofst n, t_ofst => OK (Some (make_size_t n, AST.Mptr))
-  | e_nullptr, t_ptr => OK (Some (make_nullptr, AST.Mptr))
-  | e_neg e, t_bool =>
-      do e' <- transl_expr_maybe_sized cenv e t_bool;
-      match e' with
-      | Some (e', AST.Mbool) => OK (Some (make_bool_not e', AST.Mbool))
-      | Some (_, _) => Error [ MSG "Negation of non-bool sized expression" ]
-      | None => Error [ MSG "Negation of zero-sized" ]
-      end
-  | e_plus l r, t_nat =>
-      do l' <- transl_expr_maybe_sized cenv l t_nat;
-      do r' <- transl_expr_maybe_sized cenv r t_nat;
-      match l', r' with
-      | Some (l', AST.Mint32), Some (r', AST.Mint32) => OK (Some (make_nat_add l' r', AST.Mint32))
-      | Some (_, _), Some(_, _) => Error [ MSG "Integer sum of non-integer shaped expression" ]
-      | None, _ | _, None => Error [ MSG "Integer sum of zero-sized expression" ]
-      end
-  | e_nat_eq l r, t_bool =>
-      do l' <- transl_expr_maybe_sized cenv l t_nat;
-      do r' <- transl_expr_maybe_sized cenv r t_nat;
-      match l', r' with
-      | Some (l', AST.Mint32), Some (r', AST.Mint32) => OK (Some (make_nat_eq l' r', AST.Mbool))
-      | Some (_, _), Some(_, _) => Error [ MSG "Integer comparison of non-integer shaped expressions" ]
-      | None, _ | _, None => Error [ MSG "Integer comparison of zero-sized expression" ]
-      end
-  | e_tt, (t_bool | t_nat | t_ofst | t_ptr | t_fun _ _)
-  | e_bool _, (t_unit | t_nat | t_ofst | t_ptr | t_fun _ _)
-  | e_nat _, (t_unit | t_bool | t_ofst | t_ptr | t_fun _ _)
-  | e_ofst _, (t_unit | t_bool | t_nat | t_ptr | t_fun _ _)
-  | e_nullptr, (t_unit | t_bool | t_nat | t_ofst | t_fun _ _)
-  | e_neg _, (t_unit | t_nat | t_ofst | t_ptr | t_fun _ _)
-  | e_plus _ _, (t_unit | t_bool | t_ofst | t_ptr | t_fun _ _)
-  | e_nat_eq _ _, (t_unit | t_nat | t_ofst | t_ptr | t_fun _ _)
-    =>
-      Error [ MSG "transl_expr_maybe_sized type mismatch" ]
+Fixpoint transl_expr (e: expr): Cminor.expr :=
+  match e with
+  | e_var id => Cminor.Evar id
+  | e_tt => make_int 0
+  | e_bool b => make_bool b
+  | e_nat n => make_int n
+  | e_ofst n => make_ofst n
+  | e_nullptr => make_nullptr
+  | e_neg e => make_bool_not (transl_expr e)
+  | e_add l r => make_nat_add (transl_expr l) (transl_expr r)
+  | e_eqb l r => make_nat_eq (transl_expr l) (transl_expr r)
+  | e_mul l r => make_nat_mul (transl_expr l) (transl_expr r)
   end.
 
-Definition transl_expr_sized cenv (e: expr) (t: type): res (Cminor.expr * AST.memory_chunk) :=
-  do e' <- transl_expr_maybe_sized cenv e t;
-  match e' with
-  | Some x => OK x
-  | None => Error [ MSG "transl_expr_sized expression is zero-sized" ]
+Definition transl_expr_sized (e: expr) (t: type): option (Cminor.expr * AST.memory_chunk) :=
+  match type_mem_chunk t with
+  | Some mc => Some (transl_expr e, mc)
+  | None => None
   end.
 
 (* Helper function that returns or assigns a zero-sized value *)
@@ -201,41 +172,37 @@ Definition return_or_assign_sized target e: Cminor.stmt :=
 Definition perform_then_ret_unsized target s: Cminor.stmt :=
   Cminor.Sseq s (return_or_assign_unsized target).
 
-(* Perform a GallinaC-style "return" *)
-(* With a "target", we assign the result of evaluating e to it *)
-(* Without, we exit the function with the result of evaluating e *)
-Definition ret_expr (cenv: compilenv) (target: option AST.ident) (e: expr) (t: type): res Cminor.stmt :=
-  do emc <- transl_expr_maybe_sized cenv e t;
-  OK (Option.apply
-        (return_or_assign_sized target)
-        (return_or_assign_unsized target)
-        (option_map fst emc)).
-
 Definition load_ptr_expr e_ptr mc: Cminor.expr := Cminor.Eload mc e_ptr.
-
-(* Loads from the provided address and perform a GallinaC-style return *)
-Definition ret_load_ptr target e_ptr (t: type): res Cminor.stmt :=
-  let e := Option.map (load_ptr_expr e_ptr) (type_mem_chunk t) in
-  OK (Option.apply
-        (return_or_assign_sized target)
-        (return_or_assign_unsized target)
-        e).
 
 Definition store_ptr_stmt e_ptr emc_data := Cminor.Sstore (snd emc_data) e_ptr (fst emc_data).
 
-Definition ret_store_ptr cenv target (e_ptr: Cminor.expr) (e_data: expr) (t: type): res Cminor.stmt :=
-  do emc_data <- transl_expr_maybe_sized cenv e_data t;
-  let s_store :=
-    ssrfun.Option.apply
-      (store_ptr_stmt e_ptr)
-      Cminor.Sskip
-      emc_data
-  in
-  OK (perform_then_ret_unsized target s_store).
+(* Perform a GallinaC-style "return" *)
+(* With a "target", we assign the result of evaluating e to it *)
+(* Without, we exit the function with the result of evaluating e *)
+Definition ret_expr (target: option AST.ident) (e: expr) (t: type): Cminor.stmt :=
+  match type_mem_chunk t with
+  | Some _ => return_or_assign_sized target (transl_expr e)
+  | None => return_or_assign_unsized target
+  end.
+
+(* Loads from the provided address and perform a GallinaC-style return *)
+Definition ret_load_ptr (target: option AST.ident) (e_ptr: Cminor.expr) (t: type): Cminor.stmt :=
+  match type_mem_chunk t with
+  | Some mc => return_or_assign_sized target (load_ptr_expr e_ptr mc)
+  | None => return_or_assign_unsized target
+  end.
+
+Definition ret_store_ptr (target: option AST.ident) (e_ptr: Cminor.expr) (e_data: expr) (t: type): Cminor.stmt :=
+  perform_then_ret_unsized
+    target
+    (match type_mem_chunk t with
+     | Some mc => Cminor.Sstore mc e_ptr (transl_expr e_data)
+     | None => Cminor.Sskip
+     end).
 
 (* Offset is in "memory words" (i.e. max(sizeof(t_nat), sizeof(t_ptr))) *)
 Definition stack_ptr (ofst: nat): Cminor.expr :=
-  Cminor.Econst (Cminor.Oaddrstack (Ptrofs.repr (Z.of_nat (ofst * memval_memsize)))).
+  Cminor.Econst (Cminor.Oaddrstack (Ptrofs.repr (offset_to_offset (Z.of_nat ofst)))).
 
 Definition global_ptr (id: AST.ident): Cminor.expr :=
   Cminor.Econst (Cminor.Oaddrsymbol id Ptrofs.zero).
@@ -266,125 +233,95 @@ Definition make_for_ofst (i: AST.ident) (start: Cminor.expr) (step: Cminor.expr)
              (Cminor.Sexit 0))))
 .
 
-Fixpoint transl_cmd (cenv: compilenv) (target: option AST.ident) (c: cmd) {struct c}: res Cminor.stmt :=
+Definition arg_is_sized (et: expr * type): bool :=
+  match type_mem_chunk (snd et) with
+  | Some _ => true
+  | None => false
+  end.
+
+Definition transl_args (args: list (expr * type)): list Cminor.expr :=
+  List.map (fun et => transl_expr (fst et)) (List.filter arg_is_sized args).
+
+Fixpoint transl_cmd (id_malloc id_free: AST.ident) (target: option AST.ident) (c: cmd) {struct c}: Cminor.stmt :=
   match c with
   | c_ret e t =>
-      ret_expr cenv target e t
+      ret_expr target e t
   | c_bind i' t_b c_b c_c t_c =>
-      do c_b' <- transl_cmd cenv (Some i') c_b;
-      do c_c' <- transl_cmd cenv target c_c;
-      OK (Cminor.Sseq c_b' c_c')
+      Cminor.Sseq
+        (transl_cmd id_malloc id_free (Some i') c_b)
+        (transl_cmd id_malloc id_free target c_c)
   | c_if e_if c_then c_else t_te =>
-      do (e_if', mc_if) <- transl_expr_sized cenv e_if t_bool;
-      do assert (AST.chunk_eq mc_if AST.Mbool) with "If condition is not a bool";
-      do c_then' <- transl_cmd cenv target c_then;
-      do c_else' <- transl_cmd cenv target c_else;
-      OK (Cminor.Sifthenelse e_if' c_then' c_else')
+      Cminor.Sifthenelse
+        (transl_expr e_if)
+        (transl_cmd id_malloc id_free target c_then)
+        (transl_cmd id_malloc id_free target c_else)
   | c_while c_cond id_cond c_body id_body =>
-      do c_cond' <- transl_cmd cenv (Some id_cond) c_cond;
-      do c_body' <- transl_cmd cenv (Some id_body) c_body;
       (* We don't know the context in which the while is executing
        * To be sure, we explicitly "return" after exciting the loop
-       * Because the termination checker is annoying, we must manually specify a sub-function call
        *)
-      OK
-        (perform_then_ret_unsized
-           target
-           (Cminor.Sblock
-              (Cminor.Sloop
-                 (Cminor.Sseq
-                    c_cond'
-                    (Cminor.Sifthenelse
-                       (Cminor.Evar id_cond)
-                       c_body'
-                       (Cminor.Sexit 0)))))
-        )
+      perform_then_ret_unsized
+        target
+        (Cminor.Sblock
+           (Cminor.Sloop
+              (Cminor.Sseq
+                 (transl_cmd id_malloc id_free (Some id_cond) c_cond)
+                 (Cminor.Sifthenelse
+                    (Cminor.Evar id_cond)
+                    (transl_cmd id_malloc id_free (Some id_body) c_body)
+                    (Cminor.Sexit 0)))))
   | c_read_var n t =>
       ret_load_ptr target (stack_ptr n) t
   | c_write_var n t e_data =>
-      ret_store_ptr cenv target (stack_ptr n) e_data t
-  | c_alloc_ptr e_count t e_init id_ptr id_init =>
-      match cenv.(id_malloc) with
-      | Some id_malloc =>
-          do (e_count', mc_count) <- transl_expr_sized cenv e_count t_ofst;
-          do assert (AST.chunk_eq mc_count AST.Mptr) with "Chunk of allocation size is not AST.Mptr";
-          let e_size' := make_size_from_count e_count' in
-          do emc_init' <- transl_expr_maybe_sized cenv e_init t;
-          OK
-            (ssrfun.Option.apply
-               (fun (emc_init': Cminor.expr * AST.memory_chunk) =>
-                  let (e_init', mc) := emc_init' in
-                  Cminor.Sseq
-                    (* Alloc & Initialize memory *)
-                    (Cminor.Sseq
-                       (* Alloc *)
-                       (make_call (Some id_ptr) id_malloc [ e_size' ] (AST.ef_sig AST.EF_malloc))
-                       (* Initialize *)
-                       (make_for_ofst id_init (make_size_t 0) (make_size_t 1) e_count'
-                          (fun id => store_ptr_stmt
-                                       (* offset adjustemnt done by make_ptr_shift_fw *)
-                                       (make_ptr_shift_fw
-                                          (Cminor.Evar id_ptr)
-                                          id)
-                                       emc_init')))
-                    (return_or_assign_sized target (Cminor.Evar id_ptr))
-               )
-               (return_or_assign_unsized target)
-               emc_init')
-      | None =>
-          Error [ MSG "No access to malloc" ]
-      end
+      ret_store_ptr target (stack_ptr n) e_data t
+  | c_alloc_ptr e_count t e_init id_ptr id_count id_init =>
+      Cminor.Sseq
+        (ret_expr (Some id_init) e_init t)
+        (Cminor.Sseq
+           (* Alloc & Initialize memory *)
+           (Cminor.Sseq
+              (* Alloc *)
+              (make_call (Some id_ptr) id_malloc [ make_ofst_from_count (transl_expr e_count) ] (AST.ef_sig AST.EF_malloc))
+              (* Initialize *)
+              (match type_mem_chunk t with
+               | Some mc =>
+                   make_for_ofst id_count (make_ofst 0) (make_ofst 1) (transl_expr e_count)
+                     (fun id => store_ptr_stmt
+                                  (* offset adjustemnt done by make_ptr_shift_fw *)
+                                  (make_ptr_shift_fw
+                                     (Cminor.Evar id_ptr)
+                                     id)
+                                  (Cminor.Evar id_init, mc))
+               | None => Cminor.Sskip
+               end))
+           (return_or_assign_sized target (Cminor.Evar id_ptr)))
   | c_read_ptr e_ptr t =>
-      do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-      ret_load_ptr target e_ptr' t
+      ret_load_ptr target (transl_expr e_ptr) t
   | c_write_ptr e_ptr t e_data =>
-      do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-      ret_store_ptr cenv target e_ptr' e_data t
+      ret_store_ptr target (transl_expr e_ptr) e_data t
   | c_free_ptr e_ptr =>
-      match cenv.(id_free) with
-      | Some id_free =>
-          do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-          do assert (AST.chunk_eq mc_ptr AST.Mptr) with "free pointer is not a pointer";
-          OK
-            (make_call target id_free [ e_ptr' ] (AST.ef_sig AST.EF_free))
-      | None =>
-          Error [ MSG "No access to free" ]
-      end
+      make_call target id_free [ transl_expr e_ptr ] (AST.ef_sig AST.EF_free)
   | c_shift_fw_ptr e_ptr e_shift =>
-      do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-      do assert (AST.chunk_eq mc_ptr AST.Mptr) with "shift_fw pointer is not a pointer";
-      do (e_shift', mc_shift) <- transl_expr_sized cenv e_shift t_ofst;
-      do assert (AST.chunk_eq mc_shift AST.Mptr) with "shift_fw offset is not an offset";
-      OK (return_or_assign_sized target (make_ptr_shift_fw e_ptr' e_shift'))
+      return_or_assign_sized target (make_ptr_shift_fw (transl_expr e_ptr) (transl_expr e_shift))
   | c_shift_bw_ptr e_ptr e_shift =>
-      do (e_ptr', mc_ptr) <- transl_expr_sized cenv e_ptr t_ptr;
-      do assert (AST.chunk_eq mc_ptr AST.Mptr) with "shift_bw pointer is not a pointer";
-      do (e_shift', mc_shift) <- transl_expr_sized cenv e_shift t_ofst;
-      do assert (AST.chunk_eq mc_shift AST.Mint32) with "shift_bw offset is not an offset";
-      OK (return_or_assign_sized target (make_ptr_shift_fw e_ptr' e_shift'))
+      return_or_assign_sized target (make_ptr_shift_bw (transl_expr e_ptr) (transl_expr e_shift))
   | c_ptr_eq e_ptr_l e_ptr_r =>
-      do (e_ptr_l', mc_ptr_l) <- transl_expr_sized cenv e_ptr_l t_ptr;
-      do assert (AST.chunk_eq mc_ptr_l AST.Mptr) with "ptr_eq left pointer is not a pointer";
-      do (e_ptr_r', mc_ptr_r) <- transl_expr_sized cenv e_ptr_r t_ptr;
-      do assert (AST.chunk_eq mc_ptr_r AST.Mptr) with "ptr_eq right pointer is not a pointer";
-      OK (return_or_assign_sized target (make_ptr_eq e_ptr_l' e_ptr_r'))
+      return_or_assign_sized target (make_ptr_eq (transl_expr e_ptr_l) (transl_expr e_ptr_r))
   | c_app f t_out args =>
-      let sig := mk_signature (List.map snd args) t_out in
-      do args' <- Errors.mmap (uncurry (transl_expr_maybe_sized cenv)) args;
-      let args' := ListExt.filter_map id args' in
-      let args' := List.map fst args' in
-      OK (make_call target f args' (mk_signature (List.map snd args) t_out))
+      make_call target f (transl_args args) (mk_signature (List.map snd args) t_out)
+  | c_div e_l e_r =>
+      return_or_assign_sized target (make_nat_div (transl_expr e_l) (transl_expr e_r))
+  | c_mod e_l e_r =>
+      return_or_assign_sized target (make_nat_mod (transl_expr e_l) (transl_expr e_r))
   end.
 
 Definition params_of_function (f: function): list AST.ident :=
-  ListExt.filter_map (fun idt => match idt with (_, t_unit) => None | (id, (t_bool|t_nat|t_ofst|t_ptr|t_fun _ _)) => Some id end) f.(fn_params).
+  ListExt.filter_map (fun idt => match idt with (_, t_unit) => None | (id, (t_bool|t_nat|t_ofst|t_ptr)) => Some id end) f.(fn_params).
 
 Definition vars_of_function (f: function): list AST.ident :=
-  List.map fst f.(fn_temps).
+  List.map fst f.(fn_temps) ++ List.map fst f.(fn_internals).
 
-Definition transl_funbody id_malloc id_free (f: function): res Cminor.function :=
-  do tbody <- transl_cmd (mkcompilenv (f.(fn_params)++f.(fn_temps)) id_malloc id_free) None f.(fn_body);
-  OK (Cminor.mkfunction
+Definition transl_funbody (id_malloc id_free: AST.ident) (f: function): Cminor.function :=
+  Cminor.mkfunction
         (* fn_sig *)
         (Prog.signature_of_signature (Prog.fn_signature f))
         (* fn_params *)
@@ -393,16 +330,36 @@ Definition transl_funbody id_malloc id_free (f: function): res Cminor.function :
         (vars_of_function f)
         (* fn_stackspace /!\ Stackspace holds local variables, but not temporaries *)
         (offset_to_offset f.(fn_extra).(fn_stackspace))
-        tbody)
+        (transl_cmd id_malloc id_free None f.(fn_body))
 .
 
-Definition transl_function id_malloc id_free (f: function): res Cminor.function :=
+Definition transl_function (id_malloc id_free: AST.ident) (f: function): Cminor.function :=
   transl_funbody id_malloc id_free f.
 
-Definition transl_fundef id_malloc id_free (id: AST.ident) (f: fundef): res Cminor.fundef :=
-  AST.transf_partial_fundef (transl_function id_malloc id_free) f.
+Definition transl_fundef (id_malloc id_free: AST.ident) (f: fundef): Cminor.fundef :=
+  AST.transf_fundef (transl_function id_malloc id_free) f.
 
-Definition transl_globvar (id: AST.ident) (ty: vardef) := OK tt.
+Definition transl_globvar (v: AST.globvar vardef): AST.globvar unit :=
+  AST.mkglobvar tt v.(AST.gvar_init) v.(AST.gvar_readonly) v.(AST.gvar_volatile).
+
+Definition transl_globdef (id_malloc id_free: AST.ident) (idg: AST.ident * AST.globdef fundef vardef): AST.ident * AST.globdef Cminor.fundef unit :=
+  match idg with
+  | (id, AST.Gfun f) => (id, AST.Gfun (transl_fundef id_malloc id_free f))
+  | (id, AST.Gvar v) => (id, AST.Gvar (transl_globvar v))
+  end.
+
+Definition lookup_exf (dm: Maps.PTree.t globdef) (ef: AST.external_function) (name: string)
+  : res AST.ident :=
+  match find_exf_defmap dm ef with
+  | Some id => OK id
+  | None => Error (MSG name :: MSG ": missing declaration" :: nil)
+  end.
 
 Definition transl_program (p: program) : res Cminor.program :=
-  AST.transform_partial_program2 (transl_fundef p.(prog_extra).(prog_malloc) p.(prog_extra).(prog_free)) transl_globvar (Prog.program_of_program p).
+  let dm := AST.prog_defmap p in
+  do idm <- lookup_exf dm AST.EF_malloc "malloc"%string;
+  do idf <- lookup_exf dm AST.EF_free "free"%string;
+  OK (AST.mkprogram
+        (List.map (transl_globdef idm idf) (Prog.prog_defs p))
+        (Prog.prog_public p)
+        (Prog.prog_main p)).

@@ -1,139 +1,183 @@
-From Stdlib Require Import List NArith Arith.
-From GallinaC.Utils Require Import Algebra.
-From GallinaC.Imp Require Import Monad Heap Pointer Store Memval While.
-Import Heap.Facts.
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
+From Corelib Require Import ssreflect ssrfun ssrbool.
+
+From Stdlib Require Import NArith Arith.
+
+From GallinaC.Utils Require Import ListExt Algebra Counter.
+From GallinaC.Imp Require Import Monad Storable Heap Store While.
+From GallinaC.Imp Require Export State.
 
 Local Open Scope separation_scope.
 Local Open Scope program_scope.
 
-Structure State (St: Store) (Hp: Heap) : Type :=
-  mkState
-    {
-      store: St;
-      heap: Hp;
-    }.
+Section Primitives.
 
-Arguments mkState {_ _} _ _.
-Arguments store {_ _} _.
-Arguments heap {_ _} _.
+  Context {Sm: State.type}.
+  Local Notation Ad := (@m_ad Sm).
+  Local Notation Nm := (@var_name Sm).
+  Local Notation Pt := (@ptr_t Sm).
+  Local Notation Vl := (value (@ptr_t Sm)).
+  Local Notation St := (@m_st Sm).
+  Local Notation Hp := (@m_hp Sm).
 
-Definition emp {St: Store} {Hp: Heap}: State St Hp :=
-  {| store := Store.emp; heap := $0; |}.
 
-Definition with_var {A} {St: Store} {Hp: Heap} {MS: MemStorable} (e_var: obj MS) (p_cont: name -> program (State _ _) A): program (State St Hp) A :=
-  do s <- get;
-  let (st, n) := push s.(store) (encode e_var) in
-  put {| store := st; heap := s.(heap); |};;
-  do v <- p_cont n;
-  do s <- get;
-  match pop s.(store) with
-  | Some st =>
-      put {| store := st; heap := s.(heap); |};;
-      ret v
-  | None => fail
-  end.
 
-Notation "'do' 'var' x <- m1 ; m2" := (@with_var _ _ _ _ m1 (fun x => m2))
+  Definition with_var {A} {So: Storable.type Vl} (e_var: So) (p_cont: Nm -> program Sm A): program Sm A :=
+    do s <- get;
+    match push (store s) (scnt s) (encode e_var) with
+    | Some (st, sg, n) =>
+        match mk_state_opt st sg (heap s) (alc s) with
+        | Some s1 =>
+            put s1;;
+            do v <- p_cont n;
+            do s' <- get;
+            match pop (store s') with
+            | Some st' =>
+                match mk_state_opt st' (scnt s') (heap s') (alc s') with
+                | Some s'' => put s'';; ret v
+                | None => fail
+                end
+            | None => fail
+            end
+        | None => fail
+        end
+    | None => fail
+    end.
+
+  Definition read_var {So: Storable.type Vl} (varname: Nm): program Sm So :=
+    do s <- get;
+    match lookup (store s) varname with
+    | Some val =>
+        match decode val with
+        | Some v => ret v
+        | None => fail
+        end
+    | None => fail
+    end.
+
+  Definition write_var {So: Storable.type Vl} (varname: Nm) (val: So): program Sm unit :=
+    do s <- get;
+    match mutate (store s) varname (encode val) with
+    | Some st =>
+        match mk_state_opt st (scnt s) (heap s) (alc s) with
+        | Some s' => put s'
+        | None => fail
+        end
+    | None => fail
+    end.
+
+  Definition read_ptr {So: Storable.type Vl} (p: Pt): program Sm So :=
+    do s <- get;
+    match (lookup (heap s) p) with
+    | Some val =>
+        match decode val with
+        | Some v => ret v
+        | None => fail
+        end
+    | None => fail
+    end.
+
+  Definition write_ptr {So: Storable.type Vl} (p: Pt) (val: So): program Sm unit :=
+    do s <- get;
+    match mutate (heap s) p (encode val) with
+    | Some h =>
+        match mk_state_opt (store s) (scnt s) h (alc s) with
+        | Some s' => put s'
+        | None => fail
+        end
+    | None => fail
+    end.
+
+  Definition alloc_ptr {So: Storable.type Vl} (n: N.t) (val: So): program Sm Pt :=
+    if N.leb n alloc_max_size then
+      do s <- get;
+      match alloc (heap s) (alc s) n (encode val) with
+      | Some (hp, alc', ptr) =>
+          match mk_state_opt (store s) (scnt s) hp alc' with
+          | Some s' => put s';; ret ptr
+          | None => fail
+          end
+      | None => fail
+      end
+    else fail.
+
+  Definition free_ptr (p: Pt): program Sm unit :=
+    do s <- get;
+    match free (heap s) p with
+    | Some h =>
+        match mk_state_opt (store s) (scnt s) h (alc s) with
+        | Some s' => put s'
+        | None => fail
+        end
+    | None => fail
+    end.
+
+  Definition shift_fw_ptr (ptr: Pt) (shift: N.t): program Sm Pt :=
+    do s <- get;
+    match weakly_valid (heap s) ptr, ptr_shift_fw ptr shift with
+    | true, Some p =>
+        match weakly_valid (heap s) p with
+        | true => ret p
+        | false => fail
+        end
+    | false,_ | _, None => fail
+    end.
+
+  Definition shift_bw_ptr (ptr: Pt) (shift: N.t): program Sm Pt :=
+    do s <- get;
+    match weakly_valid (heap s) ptr, ptr_shift_bw ptr shift with
+    | true, Some p =>
+        match weakly_valid (heap s) p with
+        | true => ret p
+        | false => fail
+        end
+    | false,_ | _, None => fail
+    end.
+
+  Definition eq_ptr (ptr_l: Pt) (ptr_r: Pt): program Sm bool :=
+    do s <- get;
+    match cmp_valid (heap s) ptr_l ptr_r, cmp ptr_l ptr_r with
+    | true, Some b => ret b
+    | _, _ => fail
+    end.
+
+End Primitives.
+
+Arguments alloc_ptr {Sm So} n%_N_scope val.
+Arguments shift_fw_ptr {Sm} ptr shift%_N_scope.
+Arguments shift_bw_ptr {Sm} ptr shift%_N_scope.
+
+#[global] Hint Opaque with_var read_var write_var read_ptr write_ptr alloc_ptr free_ptr
+  shift_fw_ptr shift_bw_ptr eq_ptr : seplog seplog_search.
+
+Notation "'do' 'var' x <- m1 ; m2" := (with_var m1 (fun x => m2))
                                   (at level 100, x name, m1 at level 90, m2 at level 100):
     program_scope.
 
-Notation "'do' 'var' ( x : t )  <- m1 ; m2" := (@with_var _ _ _ _ (m1: t) (fun x => m2))
+Notation "'do' 'var' ( x : t )  <- m1 ; m2" := (with_var (m1: t) (fun x => m2))
                                        (at level 100, x name, m1 at level 90, m2 at level 100):
     program_scope.
 
-Definition read_var {St: Store} {Hp: Heap} {MS: MemStorable} varname: program (State St Hp) (obj MS) :=
-  do s <- get;
-  match Store.lookup s.(store) varname with
-  | Some val =>
-      match decode val with
-      | Some v => ret v
-      | None => fail
-      end
-  | None => fail
-  end.
+Notation "ptr ~+> shift" := (shift_fw_ptr ptr shift) (at level 50, left associativity): program_scope.
 
-Definition write_var {St: Store} {Hp: Heap} {MS: MemStorable} varname (val: obj MS) : program (State St Hp) unit :=
-  do s <- get;
-  match Store.mutate s.(store) varname (encode val) with
-  | Some st =>
-      put {|
-          store := st;
-          heap := s.(heap);
-        |}
-  | None => fail
-  end.
-
-Definition read_ptr {St: Store} {Hp: Heap} {MS: MemStorable} (p : Pointer.t) : program (State St Hp) (obj MS) :=
-  do s <- get;
-  match (Heap.lookup s.(heap) p) with
-  | Some val =>
-      match decode val with
-      | Some v => ret v
-      | None => fail
-      end
-  | None => fail
-  end.
-
-Definition write_ptr {St: Store} {Hp: Heap} {MS: MemStorable} (p: Pointer.t) (val: obj MS)  : program (State St Hp) unit :=
-  do s <- get;
-  match Heap.mutate s.(heap) p (encode val) with
-  | Some h => put {|
-                  store := s.(store);
-                  heap := h;
-                |}
-  | None => fail
-  end.
-
-Definition alloc_ptr {St: Store} {Hp: Heap} {MS: MemStorable} (n: N.t) (val: obj MS): program (State St Hp) Pointer.t :=
-  do s <- get;
-  match Heap.alloc s.(heap) n (encode val) with
-  | Some (hp, ptr) => put {| store := s.(store); heap := hp |};;
-                      ret ptr
-  | None => fail
-  end.
-Arguments alloc_ptr {St Hp MS} n%_N_scope val.
-
-Definition free_ptr {St: Store} {Hp: Heap} (p: Pointer.t): program (State St Hp) unit :=
-  do s <- get;
-  match Heap.free s.(heap) p with
-  | Some h => put {| store := s.(store); heap := h; |}
-  | None => fail
-  end.
-
-Definition shift_fw_ptr {St: Store} {Hp: Heap} (ptr: Pointer.t) (shift: N.t): program (State St Hp) Pointer.t :=
-  do s <- get;
-  match weakly_valid s.(heap) ptr, Pointer.shift_fw ptr shift with
-  | true, Some p =>
-      match weakly_valid s.(heap) p with
-      | true => ret p
-      | false => fail
-      end
-  | false,_ | _, None => fail
-  end.
-Arguments shift_fw_ptr {St Hp} ptr shift%_N_scope.
-Notation "ptr ~+> shift" := (@shift_fw_ptr _ _ ptr shift) (at level 50, left associativity): program_scope.
-
-Definition shift_bw_ptr {St: Store} {Hp: Heap} (ptr: Pointer.t) (shift: N.t): program (State St Hp) Pointer.t :=
-  do s <- get;
-  match weakly_valid s.(heap) ptr, Pointer.shift_bw ptr shift with
-  | true, Some p =>
-      match weakly_valid s.(heap) p with
-      | true => ret p
-      | false => fail
-      end
-  | false,_ | _, None => fail
-  end.
-Arguments shift_bw_ptr {St Hp} ptr shift%_N_scope.
-Notation "ptr ~-> shift" := (@shift_bw_ptr _ _ ptr shift) (at level 50, left associativity): program_scope.
-
-Definition eq_ptr {St: Store} {Hp: Heap} (ptr_l: Pointer.t) (ptr_r: Pointer.t): program (State St Hp) bool :=
-  do s <- get;
-  match weakly_valid s.(heap) ptr_l, weakly_valid s.(heap) ptr_r,
-    Pointer.allows ptr_l Operation.Cmp, Pointer.allows ptr_r Operation.Cmp,
-    Pointer.cmp ptr_l ptr_r with
-  | true, true, true, true, Some b => ret b
-  | _, _, _, _, _ => fail
-  end.
+Notation "ptr ~-> shift" := (shift_bw_ptr ptr shift) (at level 50, left associativity): program_scope.
 
 Definition while {S: Type} := @While.while S.
 

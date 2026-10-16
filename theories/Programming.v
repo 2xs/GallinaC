@@ -1,7 +1,29 @@
-From Stdlib Require Export NArith Arith.
-From GallinaC.Imp Require Export Monad Heap Store Pointer Primitives While Model Intops Uint32 Uintptr.
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
 
-Open Scope program_scope.
-Open Scope int_scope.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
+From Stdlib Require Export NArith Arith.
+From GallinaC.Imp Require Export Monad Heap Store Primitives While Intops Uint32 Uintptr.
+From GallinaC.Imp Require Export Storable.
+From GallinaC.Models Require Export Pointer GCModel.
+Export Pointer(NULL).
+Export Unsigned.Notations.
+
 Open Scope N_scope.
 Open Scope nat_scope.
+Open Scope int_scope.
+Open Scope program_scope.

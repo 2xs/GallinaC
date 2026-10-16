@@ -1,4 +1,22 @@
-From Stdlib Require Import FunctionalExtensionality.
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
+From Stdlib Require Import FunctionalExtensionality Morphisms.
 
 Declare Scope program_scope.
 Local Open Scope program_scope.
@@ -82,4 +100,46 @@ Proof.
   extensionality s.
   unfold bind.
   destruct (m s) as [ [ [ a s' ] | ] | ]; reflexivity.
+Qed.
+
+Lemma bind_success
+  {S A B: Type}
+  {m: program S A} {f: A -> program S B} {a s s'}
+  (EQ: m s = Some (Success (a, s'))):
+  (bind m f) s = f a s'.
+Proof.
+  now unfold bind; rewrite EQ.
+Qed.
+
+Lemma bind_failure
+  {S A B: Type}
+  {m: program S A} {f: A -> program S B} {s}
+  (EQ: m s = Some Failure):
+  (bind m f) s = fail s.
+Proof.
+  now unfold bind; rewrite EQ.
+Qed.
+
+Lemma bind_diverge
+  {S A B: Type}
+  {m: program S A} {f: A -> program S B} {s}
+  (EQ: m s = None):
+  (bind m f) s = loop s.
+Proof.
+  now unfold bind; rewrite EQ.
+Qed.
+
+(* Registers [bind] as a morphism for [setoid_rewrite]. Note that the
+continuation uses [pointwise_relation A eq] and not [eq]. Otherwise, rewriting
+fails. *)
+#[export] Instance bind_Proper {S A B} :
+  Proper (eq ==> pointwise_relation A eq ==> eq) (@bind S A B).
+Proof.
+  unfold pointwise_relation.
+  intros m1 m2 EQm f1 f2 EQf. subst m2.
+  unfold bind. extensionality s.
+  destruct (m1 s) as [ [ [ a s' ] | ] | ].
+  - rewrite EQf; reflexivity.
+  - reflexivity.
+  - reflexivity.
 Qed.

@@ -1,24 +1,38 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
+From Corelib Require Import ssreflect ssrfun ssrbool.
+From HB Require Import structures.
+
 From Stdlib Require Import Arith ZArith List SetoidList.
 
-From GallinaC.Imp Require Import Heap Store Pointer Intops.
+From GallinaC.Imp Require Import Heap Store Intops.
+From GallinaC.Imp Require Export Value.
 From GallinaC.Compiler.Common Require Import Types.
 
-Inductive value :=
-| v_tt   : value
-| v_bool : bool -> value
-| v_nat  : forall (n: nat), value
-| v_ofst : forall (n: N.t), value
-| v_ptr  : Pointer.t -> value
-.
-
-Inductive Sized: value -> Prop :=
+Inductive Sized [Ad Pt] : @value Ad Pt -> Prop :=
 | sized_bool: forall b, Sized (v_bool b)
 | sized_nat: forall n, Sized (v_nat n)
 | sized_ofst: forall n, Sized (v_ofst n)
 | sized_ptr: forall p, Sized (v_ptr p)
 .
 
-Definition sized (v: value): bool :=
+Definition sized [Ad Pt] (v: @value Ad Pt): bool :=
   match v with
   | v_bool _ => true
   | v_tt => false
@@ -27,23 +41,21 @@ Definition sized (v: value): bool :=
   | v_ptr _ => true
   end.
 
-Inductive value_memval: value -> memval -> Prop :=
-| value_memval_unit: value_memval v_tt VUnit
-| value_memval_bool: forall b, value_memval (v_bool b) (VBool b)
-| value_memval_nat: forall n, value_memval (v_nat n) (VInt n)
-| value_memval_ofst: forall n, value_memval (v_ofst n) (VOfst n)
-| value_memval_ptr: forall p, value_memval (v_ptr p) (VPtr p)
+Inductive wt_value Ad Pt: @value Ad Pt -> type -> Prop :=
+| wt_v_tt: wt_value Ad Pt v_tt t_unit
+| wt_v_bool: forall b, wt_value Ad Pt (v_bool b) t_bool
+| wt_v_nat: forall n, wt_value Ad Pt (v_nat n) t_nat
+| wt_v_ofst: forall n, wt_value Ad Pt (v_ofst n) t_ofst
+| wt_v_ptr: forall p, wt_value Ad Pt (v_ptr p) t_ptr
 .
+Arguments wt_value [Ad Pt].
+Arguments wt_v_tt {Ad Pt}.
+Arguments wt_v_bool [Ad Pt].
+Arguments wt_v_nat [Ad Pt].
+Arguments wt_v_ofst [Ad Pt].
+Arguments wt_v_ptr [Ad Pt].
 
-Inductive wt_value: value -> type -> Prop :=
-| wt_v_tt: wt_value v_tt t_unit
-| wt_v_bool: forall b, wt_value (v_bool b) t_bool
-| wt_v_nat: forall n, wt_value (v_nat n) t_nat
-| wt_v_ofst: forall n, wt_value (v_ofst n) t_ofst
-| wt_v_ptr: forall p, wt_value (v_ptr p) t_ptr
-.
-
-Definition type_of_value (v: value): type :=
+Definition type_of_value [Ad Pt] (v: @value Ad Pt): type :=
   match v with
   | v_tt => t_unit
   | v_bool _ => t_bool
@@ -52,107 +64,45 @@ Definition type_of_value (v: value): type :=
   | v_ptr _ => t_ptr
   end.
 
-Definition value_of_memval (v: memval): value :=
-  match v with
-  | VUnit => v_tt
-  | VInt i => v_nat i
-  | VOfst o => v_ofst o
-  | VPtr p => v_ptr p
-  | VBool b => v_bool b
-  end.
-
-Definition memval_of_value (v: value): memval :=
-  match v with
-  | v_tt => VUnit
-  | v_bool b => VBool b
-  | v_nat n => VInt n
-  | v_ofst o => VOfst o
-  | v_ptr p => VPtr p
-  end.
-
 Module Facts.
 
-  Lemma sized_correct: forall v, Bool.reflect (Sized v) (sized v).
+  Lemma sized_spec [Ad Pt]: forall v, Bool.reflect (Sized v) (@sized Ad Pt v).
   Proof.
-    destruct v; constructor; try constructor; intros contra; now inversion contra.
+    case=> [|b|n|o|p] /=; constructor; try by constructor.
+    by move=> C; inversion C.
   Qed.
 
-  Lemma sized_complete: forall {v}, Sized v -> sized v = true.
+  Lemma sized_or_unit_dec [Ad Pt]: forall v, (@Sized Ad Pt v * (v <> v_tt))%type + { v = v_tt }.
   Proof.
-    now destruct 1.
+    case=> [|b|n|o|p]; first by right.
+    all: by left; split; [ constructor | discriminate ].
   Qed.
 
-  Lemma value_of_memval_spec: forall v v', value_memval v v' <-> value_of_memval v' = v.
+  Lemma type_of_value_correct {Ad Pt v}: wt_value v (@type_of_value Ad Pt v).
   Proof.
-    intros v v'.
-    split.
-    - intros H; inversion H; subst; reflexivity.
-    - intros H;
-        destruct v';
-        cbn in H; subst;
-        constructor.
+    by case v as [|b|n|o|p]; constructor.
   Qed.
 
-  Lemma memval_of_value_spec: forall v v', value_memval v v' <-> memval_of_value v = v'.
+  Lemma type_of_value_complete {Ad Pt v t} (WT: wt_value v t): @type_of_value Ad Pt v = t.
   Proof.
-    intros v v'; split.
-    - intros H; inversion H; subst; reflexivity.
-    - destruct v; intros H; subst; constructor.
+    by case WT.
   Qed.
 
-  Lemma value_sized_memval [v] (Hsized: Sized v): exists v', value_memval v v'.
+  Lemma wt_value_fun [Ad Pt v t1 t2]:
+    forall (WT1: @wt_value Ad Pt v t1) (WT2: @wt_value Ad Pt v t2)
+    , t2 = t1.
   Proof.
-    destruct Hsized;
-      (try (eexists; now econstructor)).
-  Qed.
-
-  Lemma value_memval_fun_l: forall [v1 v2 v'], value_memval v1 v' -> value_memval v2 v' -> v2 = v1.
-  Proof.
-    intros v1 v2 v' H H'.
-    inversion H; subst; inversion H'; now subst.
-  Qed.
-  Hint Resolve value_memval_fun_l: deep_gallinac.
-  Hint Rewrite value_memval_fun_l: deep_gallinac.
-
-  Lemma value_memval_fun_r: forall [v v1 v2], value_memval v v1 -> value_memval v v2 -> v2 = v1.
-  Proof.
-    intros v v1 v2 H H'.
-    inversion H; subst; inversion H'; now subst.
-  Qed.
-  Hint Resolve value_memval_fun_r: deep_gallinac.
-  Hint Rewrite value_memval_fun_r: deep_gallinac.
-
-  Lemma sized_or_unit_dec: forall v, (Sized v * (v <> v_tt))%type + { v = v_tt }.
-  Proof.
-    destruct v;
-      (try now constructor);
-      left; (split; [ constructor | discriminate ]).
-    Qed.
-
-  Lemma type_of_value_correct: forall {v}, wt_value v (type_of_value v).
-  Proof.
-    now destruct v; constructor.
-  Qed.
-
-  Lemma type_of_value_complete: forall {v t}, wt_value v t -> type_of_value v = t.
-  Proof.
-    now destruct 1.
-  Qed.
-
-  Lemma wt_value_fun: forall {v t1 t2}, wt_value v t1 -> wt_value v t2 -> t2 = t1.
-  Proof.
-    intros v t1 t2 Hwt_v1 Hwt_v2.
-    inversion Hwt_v1; subst;
-      inversion Hwt_v2; subst;
-      congruence.
+    by case => [|b|n|o|p] WT; inversion WT.
   Qed.
   #[global] Hint Resolve wt_value_fun: deep_gallinac.
 
-  Lemma wt_value_sized v t (WT: wt_value v t) (SIZED: Value.Sized v): Types.Sized t.
+  Lemma wt_value_sized [Ad Pt v t]:
+    forall (WT: @wt_value Ad Pt v t) (SIZED: Value.Sized v)
+    , Types.Sized t.
   Proof.
-    apply type_of_value_complete in WT.
-    destruct v; inversion SIZED; cbn in WT; subst; constructor.
+    by case => [|b|n|o|p] SIZED; first [ constructor | inversion SIZED ].
   Qed.
   #[global] Hint Resolve wt_value_sized: deep_gallinac.
 
 End Facts.
+

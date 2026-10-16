@@ -1,8 +1,27 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
 From Stdlib Require Import ZArith Psatz.
 
 From compcert Require Integers.
 
 From GallinaC.Utils Require Import ReflectExt.
+From GallinaC.Imp Require Import Monad.
 
 Local Open Scope Z_scope.
 
@@ -38,7 +57,7 @@ Module IntCarrier.
       pow: carrier -> carrier -> carrier;
 
       eqb: carrier -> carrier -> bool;
-      eqb_spec: forall a b, reflect (a = b) (eqb a b);
+      eqb_spec: forall a b, Bool.reflect (a = b) (eqb a b);
 
       to_Z_id: forall a, of_Z (to_Z a) = a;
       of_Z_id: forall a, 0 <= a -> to_Z (of_Z a) = a;
@@ -187,10 +206,27 @@ Module Unsigned.
 
   Definition add {UInt: Unsigned} (l r: UInt): UInt := of_Z ((to_Z l + to_Z r) mod (modulus UInt)).
 
+  Definition mul {UInt: Unsigned} (l r: UInt): UInt := of_Z ((to_Z l * to_Z r) mod (modulus UInt)).
+
+  Definition div {S} {UInt: Unsigned} (l r: UInt): program S UInt :=
+    if to_Z r =? 0 then
+      fail
+    else
+      ret (of_Z ((to_Z l / to_Z r) mod (modulus UInt))).
+
+  Definition mdl {S} {UInt: Unsigned} (l r: UInt): program S UInt :=
+    if to_Z r =? 0 then
+      fail
+    else
+      ret (of_Z ((to_Z l mod to_Z r) mod (modulus UInt))).
+
   Definition eqb {UInt: Unsigned} (l r: UInt): bool := ((to_Z l mod (modulus UInt)) =? (to_Z r mod (modulus UInt)))%Z.
 
   Arguments Bounded {UInt} n: rename, simpl never.
   Arguments add {UInt} l r: rename, simpl never.
+  Arguments mul {UInt} l r: rename, simpl never.
+  Arguments div {S UInt} l r: rename, simpl never.
+  Arguments mdl {S UInt} l r: rename, simpl never.
   Arguments eqb {UInt} l r: rename, simpl never.
 
   Module Notations.
@@ -198,6 +234,9 @@ Module Unsigned.
     Export IntCarrier.Notations.
 
     Notation "a + b" := (add a b): int_scope.
+    Notation "a * b" := (mul a b): int_scope.
+    Notation "a / b" := (div a b): int_scope.
+    Notation "a % b" := (mdl a b) (at level 60, no associativity): int_scope.
     Notation "a =? b" := (eqb a b): int_scope.
 
   End Notations.
@@ -256,6 +295,14 @@ Module Unsigned.
       unfold modulus, max_unsigned in *; lia.
     Qed.
     #[global] Hint Resolve add_bounded: ints.
+
+    Theorem mul_bounded {UInt: Unsigned} (l r: carrier UInt): Bounded (mul l r).
+    Proof.
+      unfold mul.
+      split; (rewrite of_Z_id; specialize (Z.mod_pos_bound (to_Z l * to_Z r) (modulus UInt) modulus_pos_lt) as [ LE0 LT ]; auto).
+      unfold modulus, max_unsigned in *; lia.
+    Qed.
+    #[global] Hint Resolve mul_bounded: ints.
 
     Theorem add_bounded_transparent {UInt: Unsigned} (l r: carrier UInt) (HBoundedAdd: Bounded (l :+: r)): add l r = l :+: r.
     Proof.
@@ -332,6 +379,26 @@ Module Unsigned.
     Qed.
     #[global] Hint Resolve bounded_mod_eq: ints.
 
+    Lemma div_state_indep [S: Type] [UInt: Unsigned] [l r q: carrier UInt]
+      [s1 s2: S]
+      (DIV: div l r s1 = Some (Monad.Success (q, s1))):
+      div l r s2 = Some (Monad.Success (q, s2)).
+    Proof.
+      unfold div in DIV |- *.
+      destruct (Z.eqb (to_Z r) 0); [ discriminate DIV | ].
+      cbn in DIV |- *; injection DIV as <-; reflexivity.
+    Qed.
+
+    Lemma mdl_state_indep [S: Type] [UInt: Unsigned] [l r q: carrier UInt]
+      [s1 s2: S]
+      (MDL: mdl l r s1 = Some (Monad.Success (q, s1))):
+      mdl l r s2 = Some (Monad.Success (q, s2)).
+    Proof.
+      unfold mdl in MDL |- *.
+      destruct (Z.eqb (to_Z r) 0); [ discriminate MDL | ].
+      cbn in MDL |- *; injection MDL as <-; reflexivity.
+    Qed.
+
   End Facts.
 
   Module CompCert.
@@ -375,7 +442,7 @@ Module Unsigned.
         rewrite Int.unsigned_add_carry.
         unfold Int.add_carry.
         rewrite UNSIGNEDl, UNSIGNEDr.
-        rewrite (Int.unsigned_zero), Z.add_0_r.
+        rewrite Int.unsigned_zero, Z.add_0_r.
         rewrite <- to_Z_add.
         destruct (Coqlib.zlt _ _) as [ Hlt | Hle ].
         - rewrite Int.unsigned_zero, Z.mul_0_l, Z.sub_0_r.
@@ -395,6 +462,20 @@ Module Unsigned.
           lia.
       Qed.
       #[global] Hint Resolve add_cc: ints.
+
+      Theorem mul_cc [UInt: Unsigned] (BW32: BW UInt = 32%positive):
+        forall l r l_i r_i,
+          @Bounded UInt l -> @Bounded UInt r ->
+          Int.unsigned l_i = to_Z l -> Int.unsigned r_i = to_Z r ->
+          to_Z (mul l r) = Int.unsigned (Int.mul l_i r_i).
+      Proof.
+        intros l r l_i r_i BOUNDEDl BOUNDEDr UNSIGNEDl UNSIGNEDr.
+        unfold mul, Int.mul.
+        rewrite Int.unsigned_repr_eq, UNSIGNEDl, UNSIGNEDr, <- (modulus_eq BW32).
+        apply of_Z_id.
+        specialize (Z.mod_pos_bound (to_Z l * to_Z r) (modulus UInt) modulus_pos_lt) as [ LE0 _ ]; auto.
+      Qed.
+      #[global] Hint Resolve mul_cc: ints.
 
     End BW32.
 

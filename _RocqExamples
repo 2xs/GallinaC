@@ -6,3 +6,11 @@ examples/Reverse/ReverseExecution.v
 examples/Reverse/ReverseReify.v
 examples/Reverse/ReverseOpSem.v
 examples/Reverse/ReverseDenotation.v
+examples/Collatz/
+examples/PointerCmp/
+examples/LoopTypability/
+examples/TailCall/
+examples/VarScope/
+examples/WithVarTail/
+examples/IRSlotReuse/
+examples/TCOValidate/

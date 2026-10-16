@@ -1,12 +1,32 @@
-From Stdlib Require Import List String.
-Import ListNotations.
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
+From Stdlib Require Import String.
 
 From compcert.lib Require Import Coqlib.
 From compcert.common Require Import AST Errors Linking Smallstep.
 From compcert.backend Require Cminor.
 From compcert.driver Require Import Compiler.
 
+From GallinaC.Utils Require Import ListExt.
+From GallinaC.Imp Require Import State.
 From GallinaC.Compiler.Deep Require Import Prog Lemmas.
+From GallinaC.Compiler.Passes Require TCO TCOproof DeepTypecheck.
 From GallinaC.Compiler.Passes Require Import IRgen Cminorgen IRgenproof Cminorgenproof.
 
 Definition transf_rtl_program (f: RTL.program) : res Asm.program :=
@@ -47,15 +67,18 @@ Definition transf_cminor_program (p: Cminor.program) : res Asm.program :=
 
 Definition transf_gc_program (p: program): res Asm.program :=
   Errors.OK p
-    (* @@ print print_IR *)
+    @@@ time "Deep type checking" DeepTypecheck.transf_program
     @@@ time "IR generation" IRgen.transl_program
+     @@ time "Tail-call optimization" TCO.transf_program
     @@@ time "Cminor generation" Cminorgen.transl_program
     @@@ transf_cminor_program.
 
 Local Open Scope linking_scope.
 
 Definition GallinaC_passes :=
-  mkpass Passes.IRgenproof.match_prog
+  mkpass DeepTypecheck.match_prog
+    ::: mkpass Passes.IRgenproof.match_prog
+    ::: mkpass Passes.TCOproof.match_prog
     ::: mkpass Passes.Cminorgenproof.match_prog
     ::: mkpass Selectionproof.match_prog
     ::: mkpass RTLgenproof.match_prog
@@ -86,8 +109,10 @@ Proof.
   intros T.
   unfold transf_gc_program, time in T.
   simpl in T.
-  destruct (IRgen.transl_program p) as [ p1 | e ] eqn:P1; simpl in T; try discriminate.
-  destruct (Cminorgen.transl_program p1) as [ p4 | e ] eqn:P2; simpl in T; try discriminate.
+  destruct (DeepTypecheck.transf_program p) as [ p0 | e ] eqn:P0; simpl in T; try discriminate.
+  destruct (IRgen.transl_program p0) as [ p1 | e ] eqn:P1; simpl in T; try discriminate.
+  set (p2 := TCO.transf_program p1) in *.
+  destruct (Cminorgen.transl_program p2) as [p4|e] eqn:P4; simpl in T; try discriminate.
   (** Copied from CompCert Compiler.v **)
   unfold transf_cminor_program, time in T. rewrite ! compose_print_identity in T. simpl in T.
   destruct (Selection.sel_program p4) as [p5|e] eqn:P5; simpl in T; try discriminate.
@@ -109,7 +134,9 @@ Proof.
   destruct (Stacking.transf_program p19) as [p20|e] eqn:P20; simpl in T; try discriminate.
   unfold match_prog; simpl.
 
+  exists p0; split. apply DeepTypecheck.transf_program_match; auto.
   exists p1; split. apply @IRgenproof.transf_program_match; auto.
+  exists p2; split. apply TCOproof.transf_program_match.
   exists p4; split. apply Cminorgenproof.transf_program_match; auto.
   exists p5; split. apply Selectionproof.transf_program_match; auto.
   exists p6; split. apply RTLgenproof.transf_program_match; auto.
@@ -131,10 +158,10 @@ Proof.
   reflexivity.
 Qed.
 
-Theorem gc_semantic_preservation {St Hp} p tp:
+Theorem gc_semantic_preservation {Sm: State.type} p tp:
   match_prog p tp ->
-  forward_simulation (@Deep.OpSem.semantics St Hp p) (Asm.semantics tp)
-  /\ backward_simulation (@Deep.OpSem.semantics St Hp p) (Asm.semantics tp).
+  forward_simulation (@Deep.OpSem.semantics Sm p) (Asm.semantics tp)
+  /\ backward_simulation (@Deep.OpSem.semantics Sm p) (Asm.semantics tp).
 Proof.
   unfold match_prog, pass_match; simpl.
   intros M.
@@ -145,10 +172,14 @@ Proof.
                                                     destruct H as (p & M & MM); clear H
     end.
   repeat (DestructM); subst tp.
-  assert (F: forward_simulation (@Deep.OpSem.semantics St Hp p) (Asm.semantics p19)).
+  assert (F: forward_simulation (@Deep.OpSem.semantics Sm p) (Asm.semantics p21)).
   {
     eapply compose_forward_simulations.
+    eapply DeepTypecheck.transf_program_correct; eassumption.
+    eapply compose_forward_simulations.
     eapply Passes.IRgenproof.transl_program_correct; eassumption.
+    eapply compose_forward_simulations.
+    eapply Passes.TCOproof.transf_program_correct; eassumption.
     eapply compose_forward_simulations.
     eapply Passes.Cminorgenproof.transl_program_correct; eassumption.
     eapply compose_forward_simulations.
@@ -192,35 +223,20 @@ Proof.
   apply Asm.semantics_determinate.
 Qed.
 
-(* Theorem gc_semantic_preservation {St Hp} p tp: *)
-(*   match_prog p tp -> *)
-(*   backward_simulation (@IR.Semantics.semantics St Hp p) (Asm.semantics tp). *)
-(* Proof. *)
-(*   intros. *)
-(*   apply compose_backward_simulation with (atomic (@IR.Semantics.semantics St Hp p)). *)
-(*   eapply sd_traces; eapply Asm.semantics_determinate. *)
-(*   { apply factor_backward_simulation. *)
-(*     admit. *)
-(*     apply IR.Lemmas.single_events. *)
-(*     eapply ssr_well_behaved; eapply IR.Lemmas.strongly_receptive. *)
-(*   } *)
-(*   exact (proj2 (gc_semantic_preservation _ _ H)). *)
-(* Admitted. *)
-
-Theorem transf_gc_program_correct {St Hp} p tp:
+Theorem transf_gc_program_correct {Sm: State.type} p tp:
   transf_gc_program p = OK tp ->
-  backward_simulation (@Deep.OpSem.semantics St Hp p) (Asm.semantics tp).
+  backward_simulation (@Deep.OpSem.semantics Sm p) (Asm.semantics tp).
 Proof.
   intros T.
-  now specialize (@gc_semantic_preservation St Hp p tp (transf_gc_program_match p tp T)) as (FW & BW).
+  now specialize (@gc_semantic_preservation Sm p tp (transf_gc_program_match p tp T)) as (FW & BW).
 Qed.
 
-Theorem separate_transf_gc_program_correct {St Hp} c_units asm_units gc_program:
+Theorem separate_transf_gc_program_correct {Sm: State.type} c_units asm_units gc_program:
   nlist_forall2 (fun cu tcu => transf_gc_program cu = OK tcu) c_units asm_units ->
   link_list c_units = Some gc_program ->
   exists asm_program,
       link_list asm_units = Some asm_program
-   /\ backward_simulation (@Deep.OpSem.semantics St Hp gc_program) (Asm.semantics asm_program).
+   /\ backward_simulation (@Deep.OpSem.semantics Sm gc_program) (Asm.semantics asm_program).
 Proof.
   intros.
   assert (nlist_forall2 match_prog c_units asm_units).

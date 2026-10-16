@@ -1,3 +1,21 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
 From Stdlib Require Import PArith Arith.
 
 From MetaRocq.Template Require Import All.
@@ -23,21 +41,21 @@ Polymorphic Fixpoint allocate_args_id renv (args: list (string * type)): Templat
 Polymorphic Definition mk_reify_funbody_stack (args: list (string * (AST.ident * type))): list binding :=
   List.map (fun '(mr_id, (cc_id, t_arg)) => Param mr_id cc_id t_arg) (List.rev args).
 
-Polymorphic Definition mk_reify_funbody_env (renv: reify_program_env) (args: list (string * (AST.ident * type))) : TemplateMonad (reify_funbody_env) :=
-  tmEval cbv {| prog_renv := renv; stack := mk_reify_funbody_stack args; stack_depth := 0; temps := []; |}.
+Polymorphic Definition mk_reify_funbody_env (renv: reify_program_env) (args: list (string * (AST.ident * type))) (model: ModelRef) : TemplateMonad (reify_funbody_env) :=
+  tmEval cbv {| prog_renv := renv; stack := mk_reify_funbody_stack args; stack_depth := 0; temps := []; model := model; |}.
 
 Polymorphic Fixpoint translate_funbody (renv: reify_funbody_env) (body : term) : TemplateMonad (cmd * reify_funbody_env) :=
   match body with
   | tLam _ _ body =>
       translate_funbody renv body
   | body =>
-      translate_cmd renv body
+      translate_cmd true renv body
   end.
 
-Polymorphic Definition translate_function (renv: reify_program_env) (mr_id: kername) (args: list (string * type)) (t_out: type) (body : term) : TemplateMonad reify_program_env :=
+Polymorphic Definition translate_function (renv: reify_program_env) (mr_id: kername) (args: list (string * type)) (t_out: type) (model: ModelRef) (body : term) : TemplateMonad reify_program_env :=
   '(params, renv) <- allocate_args_id renv args;;
   params <- tmEval cbv params;;
-  renv <- mk_reify_funbody_env renv params;;
+  renv <- mk_reify_funbody_env renv params model;;
   '(body, renv) <- translate_funbody renv body;;
   tfunction <- tmEval cbv
                  (AST.Internal
@@ -45,6 +63,7 @@ Polymorphic Definition translate_function (renv: reify_program_env) (mr_id: kern
                       fn_return := t_out;
                       fn_params := List.map snd params;
                       fn_temps := renv.(temps);
+                      fn_internals := nil;
                       fn_body := body;
                       fn_extra := tt;
                     |});;
@@ -56,11 +75,11 @@ Polymorphic Fixpoint translate_module (renv: reify_program_env) (module: list gl
       tm <- tmUnquote (tConst kname []);;
       f_sig <- tmEval cbn tm.(my_projT1);;
       f_sig <- tmQuote f_sig;;
-      '(args, t_out) <- translate_signature f_sig;;
+      '(args, t_out, model) <- translate_signature f_sig;;
       body <- tmEval cbn tm.(my_projT2);;
       body <- tmEval (unfold kname) body;;
       body <- tmQuote body;;
-      renv <- translate_function renv kname args t_out body;;
+      renv <- translate_function renv kname args t_out model body;;
       translate_module renv module
   | [] => tmReturn renv
   | gref::_ => tmMsg "translate_module: Unsupported global reference";; tmPrint gref;; tmFail ""
@@ -79,7 +98,7 @@ Polymorphic Definition reify_program (module main boundname: qualid): TemplateMo
         tmEval cbv
                {|
                  prog_defs := List.rev (List.map (fun '(_, (gc_id, f)) => (gc_id, AST.Gfun f)) renv.(funs));
-                 prog_public := List.map (fun x => fst (snd x)) renv.(funs);
+                 prog_public := List.rev (List.map (fun x => fst (snd x)) renv.(funs));
                  prog_main := id_main;
                  prog_extra := {| prog_next_id := renv.(next_id); |};
                |};;

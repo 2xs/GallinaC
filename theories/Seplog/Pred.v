@@ -1,396 +1,266 @@
-From GallinaC.Corec Require Export Sets.
-From GallinaC.Utils Require Import Algebra.
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
+From Corelib Require Import ssreflect ssrfun ssrbool.
 
 Require Export Setoid.
 Require Export Relation_Definitions.
 
-Declare Scope state_scope.
-Local Open Scope state_scope.
+From Stdlib Require Export Morphisms.
+
+From GallinaC.Corec Require Export Sets.
+From GallinaC.Utils Require Import Algebra.
+
+Local Open Scope separation_scope.
 
 Definition Pred (A:Type) := Setof A.
 
-(* Conjunction *)
-
-Definition inter {A:Type} (P Q : Pred A) : Pred A:=
-  fun a => P a /\ Q a.
-Hint Unfold inter: seplog.
-
-Infix "&&" := inter (at level 40, left associativity): state_scope.
-
-Lemma inter_pair {A s} (P Q: Pred A): P s -> Q s -> (P && Q) s.
-Proof.
-  intros; now constructor.
-Qed.
-Hint Resolve inter_pair: seplog.
-
-Lemma inter_split [A s] (P: Pred A): (P && P) s -> P s.
-Proof.
-  now intros (HP & _).
-Qed.
-Hint Extern 4 => apply inter_split : seplog.
-
-Lemma inter_split_l [A s] (P Q: Pred A): (P && Q) s -> P s.
-Proof.
-  now intros (HP & _).
-Qed.
-Hint Extern 4 => apply inter_split_l : seplog.
-
-Lemma inter_split_r [A s] (P Q: Pred A): (P && Q) s -> Q s.
-Proof.
-  now intros (_ & HQ).
-Qed.
-Hint Extern 4 => apply inter_split_r : seplog.
-
-Lemma inter_sym {A s} (P Q: Pred A): (P && Q) s -> (Q && P) s.
-Proof.
-  intros [ HP HQ ]; eauto with seplog.
-Qed.
-Hint Resolve inter_sym: seplog.
-
-Lemma inter_trans {A s} (P Q R: Pred A): (P && Q) s -> (Q && R) s -> (P && R) s.
-Proof.
-  intros [ HP HQ ] [ _ HR ]; eauto with seplog.
-Qed.
-Hint Resolve inter_trans: seplog.
-
-Add Parametric Relation A s : (Pred A) (fun P Q => @inter A P Q s)
-  symmetry proved by inter_sym
-  transitivity proved by inter_trans
-  as inter_rel.
-
 (* Implication *)
+Definition impl [A: Type]: Pred A -> Pred A -> Pred A := pointwise_extension Basics.impl (Tcons A Tnil).
+Arguments impl : simpl never.
+Infix "===>" := impl (at level 70, right associativity): separation_scope.
 
-Definition impl {A:Type} (P Q : Pred A) : Pred A :=
-  fun s => P s -> Q s.
-
-Infix "===>" := impl (at level 70, right associativity): state_scope.
-
-Lemma impl_impl_1 {A s} (P Q: Pred A): (P s -> Q s) -> (P ===> Q) s.
+Lemma impl_impl_1 [A s] (P Q: Pred A): (P s -> Q s) -> (P ===> Q) s.
 Proof.
-  now unfold impl.
+  by move=> IMP.
 Qed.
-Hint Resolve impl_impl_1: seplog.
+#[global] Hint Resolve impl_impl_1: seplog.
 
-Lemma impl_impl_2 {A s} (P Q: Pred A): (P ===> Q) s -> P s -> Q s.
+Lemma impl_impl_2 [A s] (P Q: Pred A): (P ===> Q) s -> P s -> Q s.
 Proof.
-  now unfold impl.
+  by move=> IMP /IMP.
 Qed.
-Hint Extern 4 => apply impl_impl_2: seplog.
+#[global] Hint Extern 4 => apply impl_impl_2: seplog.
 
-Lemma impl_refl {A s} (P: Pred A): (P ===> P) s.
+Lemma impl_refl [A s] (P: Pred A): (P ===> P) s.
 Proof.
-  now auto.
+  by move=> Ps.
 Qed.
-Hint Resolve impl_refl: seplog.
+#[global] Hint Resolve impl_refl: seplog.
 
-Lemma impl_trans {A s} (P Q R: Pred A): (P ===> Q) s -> (Q ===> R) s -> (P ===> R) s.
+Lemma impl_trans [A s] (P Q R: Pred A): (P ===> Q) s -> (Q ===> R) s -> (P ===> R) s.
 Proof.
-  unfold impl; intros; eauto.
+  by move=> IMP1 IMP2 /IMP1 /IMP2.
 Qed.
-Hint Resolve impl_trans: seplog.
+#[global] Hint Resolve impl_trans: seplog.
 
-Add Parametric Relation A s : (Pred A) (fun P Q => @impl A P Q s)
-    reflexivity proved by impl_refl
-    transitivity proved by impl_trans
-    as impl_rel.
+#[global] Instance impl_proper (A: Type):
+  Proper (pointwise_relation A iff ==> pointwise_relation A iff ==> pointwise_relation A iff) (@Pred.impl A).
+Proof.
+  move=> P P' EQP R R' EQR s.
+  by split=> IMP /EQP /IMP /EQR.
+Qed.
+
+#[global] Instance impl_proper_app (A: Type):
+  Proper (pointwise_relation A iff ==> pointwise_relation A iff ==> eq ==> iff) (@Pred.impl A).
+Proof.
+  move=> P P' EQP R R' EQR s _ <-.
+  exact: impl_proper A P P' EQP R R' EQR s.
+Qed.
+
+#[global] Instance impl_mono_proper (A: Type):
+  Proper (pointwise_relation A Basics.impl --> pointwise_relation A Basics.impl ==> pointwise_relation A Basics.impl) (@Pred.impl A).
+Proof.
+  by move=> P P' IMPP R R' IMPR s IMP /IMPP /IMP /IMPR.
+Qed.
+
+#[global] Instance impl_mono_proper_app (A: Type):
+  Proper (pointwise_relation A Basics.impl --> pointwise_relation A Basics.impl ==> eq ==> Basics.impl) (@Pred.impl A).
+Proof.
+  move=> P P' IMPP R R' IMPR s _ <-.
+  exact: impl_mono_proper A P P' IMPP R R' IMPR s.
+Qed.
 
 (* Equivalence *)
+Definition equiv [A: Type]: Pred A -> Pred A -> Pred A := pointwise_extension iff (Tcons A Tnil).
+Arguments equiv : simpl never.
+Infix "<==>" := equiv (at level 75): separation_scope.
 
-Definition equiv {A: Type} (P Q: Pred A): Pred A :=
-  fun s => P s <-> Q s.
-
-Infix "<==>" := equiv (at level 75): state_scope.
-
-Lemma equiv_impl_l {A s} (P Q: Pred A): (P <==> Q) s -> (P ===> Q) s.
+Lemma equiv_impl_l [A s] (P Q: Pred A): (P <==> Q) s -> (P ===> Q) s.
 Proof.
-  now intros [ HPQ _ ].
+  by move=> [ IMP _ ].
 Qed.
-Hint Resolve equiv_impl_l: seplog.
+#[global] Hint Resolve equiv_impl_l: seplog.
 
-Lemma equiv_impl_r {A s} (P Q: Pred A): (P <==> Q) s -> (Q ===> P) s.
+Lemma equiv_impl_r [A s] (P Q: Pred A): (P <==> Q) s -> (Q ===> P) s.
 Proof.
-  now intros [ _ HQP ].
+  by move=> [ _ IMP ].
 Qed.
-Hint Resolve equiv_impl_r: seplog.
+#[global] Hint Resolve equiv_impl_r: seplog.
 
-Lemma equiv_refl {A s} (P: Pred A): (P <==> P) s.
+Lemma equiv_refl [A s] (P: Pred A): (P <==> P) s.
 Proof.
-  now auto.
+  by split.
 Qed.
-Hint Resolve equiv_refl: seplog.
+#[global] Hint Resolve equiv_refl: seplog.
 
-Lemma equiv_sym {A s} (P Q: Pred A): (P <==> Q) s -> (Q <==> P) s.
+Lemma equiv_sym [A s] (P Q: Pred A): (P <==> Q) s -> (Q <==> P) s.
 Proof.
-  intros HPQ.
-  constructor; [ intros HQ | intros HP ].
-  now eapply HPQ.
-  now eapply HPQ.
+  by move=> [ IMP1 IMP2 ]; split.
 Qed.
-Hint Resolve equiv_sym: seplog.
+#[global] Hint Resolve equiv_sym: seplog.
 
-Lemma equiv_trans {A s} (P Q R: Pred A): (P <==> Q) s -> (Q <==> R) s -> (P <==> R) s.
+Lemma equiv_trans [A s] (P Q R: Pred A): (P <==> Q) s -> (Q <==> R) s -> (P <==> R) s.
 Proof.
-  intros HPQ HQR.
-  constructor; [ intros HP | intros HR ].
-  now eapply HQR, HPQ.
-  now eapply HPQ, HQR.
+  move=> [ IMP1 IMP2 ] [ IMP3 IMP4 ].
+  by split=> [ /IMP1 /IMP3 | /IMP4 /IMP2 ].
 Qed.
-Hint Resolve equiv_trans: seplog.
+#[global] Hint Resolve equiv_trans: seplog.
 
-Add Parametric Relation A s : (Pred A) (fun P Q => @equiv A P Q s)
-    reflexivity proved by equiv_refl
-    symmetry proved by equiv_sym
-    transitivity proved by equiv_trans
-    as equiv_rel.
-
-(* Tautology *)
-
-Definition taut {A:Type} (P: Pred A) : Prop :=
-  forall s, P s.
-
-Notation "|- P" := (taut P) (at level 80): state_scope.
-
-(* Existential quantification *)
-
-Definition Exis {A B : Type} (P : A -> Pred B) : Pred B :=
-  fun s => exists x, P x s.
-
-Notation "'Exists' x .. y , p" :=
-  (Exis (fun x => .. (Exis (fun y => p)) ..))
-    (at level 200, x closed binder, y closed binder, right associativity).
-
-(* Morphisms *)
-
-Add Parametric Morphism A s : (@inter A)
-    with signature (fun P Q => @impl A P Q s ) ==> (fun P Q => @impl A P Q s) ==> (fun P Q => @impl A P Q s) as inter_impl_mor.
+#[global] Instance equiv_proper (A: Type):
+  Proper (pointwise_relation A iff ==> pointwise_relation A iff ==> pointwise_relation A iff) (@Pred.equiv A).
 Proof.
-  unfold impl.
-  intros P P' HimplP Q Q' HimplQ [ HP HQ ].
-  eauto with seplog.
+  move=> P P' EQP R R' EQR s.
+  by split=> -[IMP1 IMP2]; split=> [/EQP /IMP1 /EQR | /EQR /IMP2 /EQP].
 Qed.
 
-Add Parametric Morphism A s : (@inter A)
-    with signature (fun P Q => @equiv A P Q s) ==> (fun P Q => @equiv A P Q s) ==> (fun P Q => @impl A P Q s) as inter_equiv_mor.
+#[global] Instance equiv_proper_app (A: Type):
+  Proper (pointwise_relation A iff ==> pointwise_relation A iff ==> eq ==> iff) (@Pred.equiv A).
 Proof.
-  intros P P' [ HPP' HP'P ] Q Q' [ HQQ' HQ'Q ] [ HP HQ ].
-  constructor; eauto.
+  move=> P P' EQP R R' EQR s _ <-.
+  exact: equiv_proper A P P' EQP R R' EQR s.
 Qed.
 
-Add Parametric Morphism A s : (@impl A)
-    with signature (fun P Q => @impl A Q P s) ==> (fun P Q => @impl A P Q s) ==> (fun P Q => @impl A P Q s) as impl_impl_mor.
+Notation "|- P ===> Q" := (pointwise_relation _ Basics.impl P Q) (at level 80, P at level 69, Q at level 70): separation_scope.
+Notation "|- P <==> Q" := (pointwise_relation _ iff P Q) (at level 80, P at level 69, Q at level 74): separation_scope.
+(* Uncomment to allow arbitrary quantified predicates.
+   Note: This means that [|- P <==> Q] and [|- (P <==> Q)] denote convertible, but syntactically different terms. The second is not compatible with Rocq's rewrite system. *)
+(* Notation "|- P" := (all P) (at level 80, P at level 69): separation_scope. *)
+
+#[global] Instance pointwise_impl_proper (A: Type):
+  Proper (pointwise_relation A iff ==> pointwise_relation A iff ==> iff) (pointwise_relation A Basics.impl).
 Proof.
-  intros P P' HP'P Q Q' HQQ' HPQ HP'; eauto.
+  move=> P P' EQP Q Q' EQQ.
+  by split=> IMP s /EQP /IMP /EQQ.
 Qed.
 
-Add Parametric Morphism A s : (@impl A)
-    with signature (fun P Q => @equiv A P Q s) ==> (fun P Q => @equiv A P Q s) ==> (fun P Q => @equiv A P Q s) as impl_equiv_mor.
-Proof.
-  intros P P' [ HPP' HP'P ] Q Q' [ HQQ' HQ'Q ].
-  constructor; [ intros HPQ HP' | intros HQP HQ' ]; eauto.
-Qed.
-
-Add Parametric Morphism A s : (@equiv A)
-    with signature (fun P Q => @equiv A P Q s) ==> (fun P Q => @equiv A P Q s) ==> (fun P Q => @impl A P Q s) as equiv_impl_mor.
-Proof.
-  intros P P' [ HPP' HP'P ] Q Q' [ HQQ' HQ'Q ] [ HPQ HQP ].
-  constructor; [ intros HP' | intros HQ' ]; eauto.
-Qed.
-
-Add Parametric Morphism A s : (@equiv A)
-    with signature (fun P Q => @equiv A P Q s) ==> (fun P Q => @equiv A P Q s) ==> (fun P Q => @equiv A P Q s) as equiv_equiv_mor.
-Proof.
-  intros P P' [ HPP' HP'P ] Q Q' [ HQQ' HQ'Q ].
-  constructor; [ intros [ HPQ HQP ] | intros [ HP'Q' HQ'P' ] ];
-    constructor; eauto.
-Qed.
-
-Add Parametric Morphism A B b : (@Exis A B)
-    with signature (fun P Q => forall a, @impl B (P a) (Q a) b) ==> (fun P Q => @impl B P Q b)
-      as exists_impl_mor.
-Proof.
-  unfold impl, Exis.
-  intros P P' Himpl [ x HP ].
-  exists x.
-  eauto.
-Qed.
-
-Add Parametric Morphism A B b : (@Exis A B)
-    with signature (fun P Q => forall a, @equiv B (P a) (Q a) b) ==> (fun P Q => @equiv B P Q b)
-      as exists_equiv_mor.
-Proof.
-  unfold equiv, Exis.
-  intros P P' Hequiv.
-  constructor; [ intros [ x HP ] | intros [ x HP' ] ];
-    exists x;
-    now apply Hequiv.
-Qed.
-
-Add Parametric Morphism A: (@taut A)
-    with signature (fun P Q => forall s, @equiv A P Q s) ==> iff
-      as  taut_equiv_mor.
-Proof.
-  intros P Q Hequiv.
-  split; [ intros H | intros H ]; intros s;
-    specialize (Hequiv s);
-    specialize (H s);
-    destruct Hequiv as [ HPQ HQP ];
-    eauto.
-Qed.
-
-(* Multi-constructor lemmas *)
-
-Lemma impl_refl_eq {A:Type} (p q : Pred A):
+Lemma impl_refl_eq [A:Type] (p q : Pred A):
   p = q ->
       |- p ===> q.
 Proof.
-  intro Heq; now subst.
+  by move=> -> s.
 Qed.
-Hint Resolve impl_refl_eq: seplog.
+#[global] Hint Resolve impl_refl_eq: seplog.
 
-Lemma impl_refl_taut {A: Type} (P: Pred A):
+Lemma impl_refl_taut [A: Type] (P: Pred A):
       |- P ===> P.
 Proof.
-  eauto with seplog.
+  by move=> s.
 Qed.
-Hint Resolve impl_refl_taut: seplog.
+#[global] Hint Resolve impl_refl_taut: seplog.
 
-Lemma impl_trans_taut {A:Type} (p q r: Pred A) :
+Lemma impl_trans_taut [A:Type] (p q r: Pred A) :
       |- p ===> q -> |- q ===> r -> |- p ===> r.
 Proof.
-  intros Ht Ht' s Hs.
-  now apply Ht', Ht.
+  by move=> IMP1 IMP2 s /IMP1 /IMP2.
 Qed.
-Hint Resolve impl_trans_taut: seplog.
+#[global] Hint Resolve impl_trans_taut: seplog.
 
-Lemma impl_antisym {A: Type} s (p q: Pred A):
+Lemma impl_antisym [A: Type] s (p q: Pred A):
   (p ===> q) s -> (q ===> p) s -> (p <==> q) s.
 Proof.
-  intros Ht Ht'.
-  constructor;
-    eauto with seplog.
+  by move=> IMP1 IMP2; split.
 Qed.
-Hint Resolve impl_antisym: seplog.
+#[global] Hint Resolve impl_antisym: seplog.
 
-Lemma impl_antisym_taut {A:Type} (p q: Pred A) :
+Lemma impl_antisym_taut [A:Type] (p q: Pred A) :
       |- p ===> q -> |- q ===> p -> |- p <==> q.
 Proof.
-  intros Ht Ht'.
-  constructor; [ apply Ht | apply Ht' ].
+  move=> IMP1 IMP2 s.
+  by split; [ apply: IMP1 | apply: IMP2 ].
 Qed.
-Hint Resolve impl_antisym_taut: seplog.
+#[global] Hint Resolve impl_antisym_taut: seplog.
 
-Lemma equiv_refl_eq {A: Type} (p q: Pred A):
+Lemma equiv_refl_eq [A: Type] (p q: Pred A):
   p = q -> |- p <==> q.
 Proof.
-  intros Heq; now subst.
+  by move=> -> s.
 Qed.
-Hint Resolve equiv_refl_eq: seplog.
+#[global] Hint Resolve equiv_refl_eq: seplog.
 
-Lemma equiv_refl_taut {A: Type} (P: Pred A):
+Lemma equiv_refl_taut [A: Type] (P: Pred A):
       |- P <==> P.
 Proof.
-  eauto with seplog.
+  by move=> s.
 Qed.
-Hint Resolve equiv_refl_taut: seplog.
+#[global] Hint Resolve equiv_refl_taut: seplog.
 
-Lemma equiv_sym_taut {A: Type} (P Q: Pred A):
+Lemma equiv_sym_taut [A: Type] (P Q: Pred A):
   (|- P <==> Q) -> (|- Q <==> P).
 Proof.
-  intros H s.
-  specialize (H s).
-  eauto with seplog.
+  move=> EQV s.
+  exact: iff_sym (EQV s).
 Qed.
-Hint Resolve equiv_sym_taut: seplog.
+#[global] Hint Resolve equiv_sym_taut: seplog.
 
-Lemma equiv_trans_taut {A: Type} (P Q R: Pred A):
+Lemma equiv_trans_taut [A: Type] (P Q R: Pred A):
   (|- P <==> Q) -> (|- Q <==> R) -> (|- P <==> R).
 Proof.
-  intros HEPQ HEQR s.
-  specialize (HEPQ s) as [ HPQ HQP ].
-  specialize (HEQR s) as [ HQR HRQ ].
-  constructor; auto.
+  move=> EQV1 EQV2 s.
+  exact: iff_trans (EQV1 s) (EQV2 s).
 Qed.
-Hint Resolve equiv_trans_taut: seplog.
+#[global] Hint Resolve equiv_trans_taut: seplog.
 
-Lemma Exists_impl {A B: Type} s: forall (p: Pred A) (q: B -> Pred A),
-    (Exists x, p ===> q x) s  -> (p ===> Exists x, q x) s.
-Proof.
-  intros p q Himp Hs.
-  unfold impl, Exis,taut in *.
-  destruct (Himp) as (x & Himp').
-  exists x; eauto with seplog.
-Qed.
-Hint Resolve Exists_impl: seplog.
+(* Top *)
+Notation top := (Basics.const True).
 
-Lemma Exists_impl_taut {A B: Type}: forall (p: Pred A) (q: B -> Pred A),
-    (|- Exists x, p ===> q x)  -> |- (p ===> Exists x, q x).
+Lemma top_intro [A: Type] (P: Pred A):
+  |- P ===> top.
 Proof.
-  intros p q Himp s Hs.
-  unfold impl, Exis,taut in *.
-  destruct (Himp s) as (x & Himp').
-  exists x; eauto.
+  by [].
 Qed.
-Hint Resolve Exists_impl_taut: seplog.
+#[global] Hint Resolve top_intro: seplog.
 
-Lemma skolem_left {A B: Type} s: forall (p: B ->Pred A) (q: Pred A),
-    (forall x, (p x ===> q) s) -> ((Exists x, p x) ===> q) s.
-Proof.
-  intros p q Ha Hm.
-  destruct Hm as (x & Hp).
-  now apply (Ha x).
-Qed.
-Hint Resolve skolem_left: seplog.
+(* Negation *)
+Definition neg [A: Type] (P: Pred A): Pred A := impl P (Basics.const False).
+Arguments neg : simpl never.
 
-Lemma skolem_left_taut{A B: Type}: forall (p: B ->Pred A)
-                                     (q: Pred A),
-    (forall x, |- p x ===> q) -> |- (Exists x, p x) ===> q.
+#[global] Instance neg_proper (A: Type):
+  Proper (pointwise_relation A iff ==> pointwise_relation A iff) (@neg A).
 Proof.
-  intros p q Ha s Hm.
-  destruct Hm as (x & Hp).
-  now apply (Ha x).
+  move=> P P' EQP.
+  exact: impl_proper A P P' EQP (Basics.const False) (Basics.const False) (fun _ => iff_refl False).
 Qed.
-Hint Resolve skolem_left_taut: seplog.
 
-Lemma inst_Exists {A B: Type} s:
-  forall (P: B -> Pred A),
-  forall x, (P x s) -> (Exists x, P x) s.
+#[global] Instance neg_proper_app (A: Type):
+  Proper (pointwise_relation A iff ==> eq ==> iff) (@neg A).
 Proof.
-  intros p x HP.
-  now exists x.
+  move=> P P' EQP s _ <-.
+  exact: neg_proper A P P' EQP s.
 Qed.
-Hint Resolve inst_Exists: seplog.
 
-Lemma inst_Exists_taut {A B: Type}:
-  forall (P: B -> Pred A),
-  forall x, |- P x -> |- Exists x, P x.
+#[global] Instance neg_mono_proper (A: Type):
+  Proper (pointwise_relation A Basics.impl --> pointwise_relation A Basics.impl) (@neg A).
 Proof.
-  intros p x HP s.
-  now exists x.
+  move=> P P' IMPP.
+  exact: impl_mono_proper A P P' IMPP (Basics.const False) (Basics.const False) (impl_refl_taut (Basics.const False)).
 Qed.
-Hint Resolve inst_Exists_taut: seplog.
 
-Lemma swap_Exists {A B:Type} (p: B -> B -> Pred A):
-  |- (Exists x y, p x y) <==> Exists y x, p x y .
+#[global] Instance neg_mono_proper_app (A: Type):
+  Proper (pointwise_relation A Basics.impl --> eq ==> Basics.impl) (@neg A).
 Proof.
-  apply impl_antisym_taut; intros s Hm; unfold Exis in *;
-    destruct Hm as (x & x0 & H); eauto.
+  move=> P P' IMPP s _ <-.
+  exact: neg_mono_proper A P P' IMPP s.
 Qed.
-Hint Resolve swap_Exists: seplog.
 
-Lemma impl_cnj_right {A: Type} s :
-  forall (p q r: Pred A),
-    (p  ===> q) s -> (p ===> r) s  -> (p ===> q && r) s.
+#[global] Instance under_rel_proper {T: Type} {R: relation T} `{Equivalence T R}:
+  Proper (R ==> R ==> iff) (Under_rel T R).
 Proof.
-  intros p q r Hi1 Hi2 Hs; split;
-    [now apply Hi1| now apply Hi2].
+  move=> X Y EQXY X' Y' EQXY'.
+  by rewrite !Under_relE EQXY EQXY'.
 Qed.
-Hint Resolve impl_cnj_right: seplog.
-
-Lemma impl_cnj_right_taut {A: Type} :
-  forall (p q r: Pred A),
-    |-  p  ===> q -> |- p ===>  r  -> |- p ===> q && r.
-Proof.
-  intros p q r Hi1 Hi2 s Hs; split;
-    [now apply Hi1| now apply Hi2].
-Qed.
-Hint Resolve impl_cnj_right_taut: seplog.

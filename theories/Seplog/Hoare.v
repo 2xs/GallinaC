@@ -1,164 +1,116 @@
-From GallinaC.Imp Require Export Monad While.
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
 
-Create HintDb seplog.
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
+From Corelib Require Import ssreflect ssrfun ssrbool.
+
+From GallinaC.Imp Require Export Monad While.
+From GallinaC.Seplog Require Export Pred.
+From GallinaC.Seplog.Exists Require Import Exists.
+From GallinaC.Seplog.Union Require Import Union.
+From GallinaC.Seplog.Forall Require Import Forall.
 
 Local Open Scope program_scope.
+Local Open Scope separation_scope.
 
-Definition partial_exception_hoare
-  {S A : Type} (P : S -> Prop) (m : program S A)
-  (Q : A -> S -> Prop) : Prop :=
-  forall s,
-    P s -> match m s with
-           | Some (Success (a, s')) => Q a s'
-           | Some Failure => False
-           | None =>  True
-           end.
+Definition hoare [S A: Type] (total: bool) (P: Pred S) (m: program S A) (Q: A -> Pred S): Prop :=
+  forall s, P s -> match m s with
+                   | Some (Success (a, s')) => Q a s'
+                   | Some Failure => False
+                   | None => ~~ total
+                   end.
 
 Notation "{{ P }} m {{ Q }}" :=
-  (partial_exception_hoare P m Q)
+  (hoare false P m Q)
     (at level 90,
       format "'[' '[' {{  P  }}  ']' '/  ' '[' m ']' '['  {{  Q  }} ']' ']'"
     ).
 
-Lemma weaken
-  {S A : Type} (m : program S A) (P Q : S -> Prop) (R : A -> S -> Prop) :
-  {{ Q }} m {{ R }} -> (forall s, P s -> Q s) -> {{ P }} m {{ R }}.
+Notation "[[ P ]] m [[ Q ]]" :=
+  (hoare true P m Q)
+    (at level 90,
+      format "'[' '[' [[  P  ]]  ']' '/  ' '[' m ']' '['  [[  Q  ]] ']' ']'"
+    ).
+
+#[global] Instance hoare_proper [S A: Type] (total: bool):
+  Proper (pointwise_relation S iff ==> eq ==> pointwise_relation A (pointwise_relation S iff) ==> iff)
+    (@hoare S A total).
 Proof.
-  intros Hm Himpl s Hp.
-  destruct (m s) as [ [(a & s') | ] | ] eqn:Hms;
-    specialize (Hm _ (Himpl _ Hp)) as Hm';
-    now rewrite Hms in Hm'.
+  move=> P P' EQP m _ <- Q Q' EQQ.
+  by split=> TRIPLE s /EQP /TRIPLE;
+    case: (m s) => [ [ [ a s' ] | ] | ] // /(EQQ a s').
 Qed.
 
-Lemma strengthen
-  {S A : Type} (m : program S A) (P : S -> Prop) (Q R : A -> S -> Prop) :
-  {{ P }} m {{ Q }} -> (forall a s, Q a s -> R a s) -> {{ P }} m {{ R }}.
+Lemma weaken [S A: Type] [total: bool] [m: program S A] [P Q: Pred S] [R: A -> Pred S]:
+  hoare total Q m R -> (forall s, P s -> Q s) -> hoare total P m R.
 Proof.
-  intros Hm Himpl s Hp.
-  destruct (m s) as [ [(a & s') | ] | ] eqn:Hms;
-    specialize (Hm _ Hp) as Hm';
-    rewrite Hms in Hm'; auto.
+  by move=> TRIPLE IMP s /IMP /TRIPLE.
 Qed.
 
-Lemma bind_rule
-  {S A B : Type} (m : program S A) (f : A -> program S B)
-  (P : S -> Prop) (Q : A -> S -> Prop) (R : B -> S ->  Prop) :
-  (forall a, {{ Q a }} f a {{ R }}) -> {{ P }} m {{ Q }} ->
-  {{ P }} do x <- m; f x {{ R }}.
+Lemma strengthen [S A: Type] [total: bool] [m: program S A] [P: Pred S] [Q R: A -> Pred S]:
+  hoare total P m Q -> (forall a s, Q a s -> R a s) -> hoare total P m R.
 Proof.
-  intros Hf Hm s Hp.
-  unfold bind.
-  destruct  (m s) as [ [(a & s') | ] | ] eqn:Hms; auto.
-  - destruct  (f a s') as [ [(a' & s'') | ] | ] eqn:Hfas; auto;
-      specialize (Hm _ Hp);
-      rewrite Hms in Hm;
-      specialize (Hf _ _ Hm);
-      now rewrite Hfas in Hf.
-  - specialize (Hm _ Hp).
-    now rewrite Hms in Hm.
+  move=> TRIPLE IMP s /TRIPLE.
+  by case: (m s) => [ [ [ a s' ] | ] | ] // /IMP.
 Qed.
 
-Lemma seq_rule
-  {S A B : Type} (m1 : program S A) (m2 : program S B)
-  (P : S -> Prop) (Q : S -> Prop) (R : B -> S ->  Prop) :
-  {{ Q }} m2 {{ R }} -> {{ P }} m1 {{ fun _ s => Q s }} ->
-  {{ P }} m1;; m2 {{ R }}.
+Lemma consequence [S A: Type] [total: bool] [m: program S A] [P P': Pred S] [Q Q': A -> Pred S]:
+  (forall s, P' s -> P s) -> hoare total P m Q -> (forall a s, Q a s -> Q' a s) ->
+  hoare total P' m Q'.
 Proof.
-  intros Hm2 Hm1.
-  exact (bind_rule m1 (fun _ => m2) P (fun _ s => Q s) R (fun _ => Hm2) Hm1).
+  move=> PRE TRIPLE POST.
+  exact: strengthen (weaken TRIPLE PRE) POST.
 Qed.
 
-Lemma ret_triple {S A : Type} (a : A) (P : A -> S -> Prop) :
-  {{ fun s => P a s }} ret a {{ P }}.
+Lemma total_partial [S A: Type] [P: Pred S] [m: program S A] [Q: A -> Pred S]:
+  [[ P ]] m [[ Q ]] -> {{ P }} m {{ Q }}.
 Proof.
-  now intros s Hp.
-Qed.
-Hint Resolve ret_triple: seplog.
-
-Lemma get_triple {S : Type} (P : S -> S -> Prop) :
-  {{ fun s => P s s }} get {{ P }}.
-Proof.
-  now intros s Hp.
-Qed.
-Hint Resolve get_triple: seplog.
-
-Lemma put_triple {S : Type} (s : S) (P : unit -> S -> Prop) :
-  {{ fun _ => P tt s }} put s {{ P }}.
-Proof.
-  now intros s' Hp.
-Qed.
-Hint Resolve put_triple: seplog.
-
-Lemma modify_triple {S : Type} (f : S -> S) (P : unit -> S ->  Prop) :
-  {{ fun s => P tt (f s) }} modify f {{ P }}.
-Proof.
-  unfold modify.
-  eapply bind_rule.
-  - intro s.
-    apply put_triple.
-  - eapply weaken; eauto with seplog.
-Qed.
-Hint Resolve modify_triple: seplog.
-
-Lemma fail_triple{S A: Type}(P: A -> S -> Prop):
-  {{ fun _ => False}} fail {{P}}.
-Proof.
-  now intros x Hf.
-Qed.
-Hint Resolve fail_triple: seplog.
-
-Lemma if_rule
-  {S A : Type} (cond : program S bool) (m1 m2 : program S A)
-  (P : S -> Prop) (Q : bool -> S -> Prop) (R : A -> S -> Prop) :
-  {{ P }} cond {{ Q }} -> {{ Q true}} m1 {{ R }} -> {{ Q false}} m2 {{ R }} ->
-  {{ P }} If cond then m1 else m2 {{ R }}.
-Proof.
-  intros Hcond Hm1 Hm2.
-  eapply bind_rule.
-  - intros [ | ].
-    + exact Hm1.
-    + exact Hm2.
-  - exact Hcond.
-Qed.
-Hint Resolve if_rule: seplog.
-
-Lemma while_fuel_rule
-  (fuel : nat) {S : Type} {cond : program S bool} {body : program S unit}
-  {I : bool -> S -> Prop}
-  (COND: {{ fun s => exists b, I b s }} cond {{ I }})
-  (BODY: {{ I true }} body {{ fun _ s' => exists b, I b s' }})
-  : {{ fun s => exists b, I b s }} while_fuel fuel cond body {{ fun _ s' => I false s' }}.
-Proof.
-  induction fuel as [ | fuel IH];
-    [now intros s (b & Hi) |].
-  rewrite while_fuel_fixpoint.
-  eapply if_rule.
-  - exact COND.
-  - eapply seq_rule; eassumption.
-  - eapply weaken; auto with seplog.
+  move=> TRIPLE s /TRIPLE.
+  by case: (m s) => [ [ [ a s' ] | ] | ].
 Qed.
 
-Lemma while_rule
-  {S : Type} {cond : program S bool} {body : program S unit}
-  {I : bool -> S -> Prop}
-  (COND: {{ fun s => exists b, I b s }} cond{{ I }})
-  (BODY: {{ I true }} body {{ fun _ s' => exists b, I b s' }})
-  : {{ fun s => exists b, I b s }}
-      while cond body
-      {{ fun _ s' => I false s' }}.
+Lemma exists_pre [S A B: Type] [total: bool] [P: B -> Pred S] [m: program S A] [Q: A -> Pred S]:
+  (forall x, hoare total (P x) m Q) -> hoare total (Exists x, P x) m Q.
 Proof.
-  intros s Hex.
-  remember (while cond body) as w.
-  destruct (w s) eqn:Hws; auto.
-  subst.
-  rewrite while_fuel_while_some in Hws.
-  destruct Hws as (fuel & Hfuel).
-  destruct o; [destruct p|].
-  - specialize
-      (while_fuel_rule fuel COND BODY s Hex) as Hf.
-    now rewrite Hfuel in Hf.
-  - eapply while_fuel_rule  with (fuel := fuel) in COND;
-      eauto with seplog.
-    specialize (COND s Hex).
-    now rewrite Hfuel in COND.
+  move=> TRIPLE s [ x Pxs ].
+  exact: TRIPLE x s Pxs.
+Qed.
+
+Lemma disj_rule [S A: Type] [total: bool] [P1 P2: Pred S] [m: program S A] [Q1 Q2: A -> Pred S]:
+  hoare total P1 m Q1 -> hoare total P2 m Q2 ->
+  hoare total (P1 || P2) m (fun a => Q1 a || Q2 a).
+Proof.
+  move=> TRIPLE1 TRIPLE2 s [/TRIPLE1 | /TRIPLE2].
+  - by case: (m s) => [ [ [ a s' ] | ] | ] // Q1as'; left.
+  - by case: (m s) => [ [ [ a s' ] | ] | ] // Q2as'; right.
+Qed.
+
+Lemma conj_rule [S A I: Type] [total: bool] [P: I -> Pred S] [m: program S A] [Q: I -> A -> Pred S]:
+  inhabited I -> (forall i, hoare total (P i) m (Q i)) ->
+  hoare total (Forall i, P i) m (fun a => Forall i, Q i a).
+Proof.
+  move=> [i0] TRIPLE s FPs.
+  case EQm: (m s) (TRIPLE i0 s (FPs i0)) => [ [ [ a s' ] | ] | ] // _ i.
+  by move: (TRIPLE i s (FPs i)); rewrite EQm.
+Qed.
+
+Lemma pure_pre [S A: Type] [total: bool] [p: Prop] [P: Pred S] [m: program S A] [Q: A -> Pred S]:
+  (p -> hoare total P m Q) -> hoare total (fun s => p /\ P s) m Q.
+Proof.
+  move=> TRIPLE s [Hp Ps].
+  exact: TRIPLE Hp s Ps.
 Qed.

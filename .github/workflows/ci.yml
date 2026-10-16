@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: frfort/gallinac:base
+      options: --user 0:0
+    env:
+      OPAMROOT: /home/rocq/.opam
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: opam exec -- make
+      - name: Examples
+        run: opam exec -- make examples
+      - name: Extraction
+        run: opam exec -- make extraction
+      - name: Reverse code generator
+        run: opam exec -- make reversec
+      - name: Reverse binary
+        run: opam exec -- make reverse
+      - name: Run reverse
+        run: ./reverse
+      - name: Upload reverse artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: reverse-example
+          path: ./reverse
+          retention-days: 7

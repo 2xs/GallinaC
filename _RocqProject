@@ -4,7 +4,9 @@
 theories/Corec/
 theories/Utils/
 theories/Imp/
-theories/Compiler/
+theories/Models/
 theories/Seplog/
 theories/Programming.v
+theories/Proving.v
+theories/Compiler/
 theories/Compiler.v

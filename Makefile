@@ -8,6 +8,9 @@ clean: Makefile.rocq clean_extraction clean_examples
 	+$(MAKE) -f Makefile.rocq cleanall
 	rm -rf Makefile.rocq Makefile.rocq.conf
 
+deepclean: clean
+	find -name '*.vo' -or -name '*.vos' -or -name '*.vok' -or -name '*.glob' -or -name 'lia.cache' -or -name '*.aux' | while read F; do rm "$$F"; done
+
 examples: Makefile.examples.rocq all
 	+$(MAKE) -f Makefile.examples.rocq all
 
@@ -30,8 +33,11 @@ extraction/STAMP: Makefile.rocq Makefile.examples.rocq examples/Reverse/ReverseR
 	rocq repl -R theories GallinaC -R examples GallinaC.Examples -batch -load-vernac-source examples/Reverse/ReverseExtraction.v
 	touch extraction/STAMP
 
-%.vo: Makefile.rocq FORCE
+theories/%.vo: Makefile.rocq FORCE
 	+$(MAKE) -f Makefile.rocq $@
+
+examples/%.vo: Makefile.examples.rocq FORCE
+	+$(MAKE) -f Makefile.examples.rocq $@
 
 INCLUDE_EXTRACTION = $(addprefix -I , $(wildcard ./extraction))
 

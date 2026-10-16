@@ -1,74 +1,89 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
 From MetaRocq.Template Require Import All.
+
+From Stdlib Require Import PArith.
 
 From GallinaC.Utils Require Import ListExt.
 
 From GallinaC.Compiler.Common Require Export Types.
+From GallinaC.Compiler.Reify Require Export Common.
 
 Import MonadNotation.
 Local Open Scope bs_scope.
 
-Module E_reify_type.
-  Definition not_base_type := "Error in reify_type: not a base type.".
-
-  Definition first_class_use_of_program := "You are probably trying to manipulate a program (command/function/procedure) as a first-class value. Doing so is forbidden as it would allow building (escaping) closures which are currently not supported (and will likely never be in scope).".
-
-End E_reify_type.
-
 Polymorphic Definition translate_storable (tm: term): TemplateMonad type :=
-  match tm with
-  | tConst (_, "ptr_storable") [] => tmReturn t_ptr
-  | tConst (_, "nat_storable") [] => tmReturn t_nat
-  | _ =>
-      tmBind
-        (tmPrint tm)
-        (fun _ => tmFail "Error in reify_storable")
+  match resolve_storable tm with
+  | Some s => tmEval cbv (resolve_storable_type s)
+  | None => tmPrint tm;; tmFail "Error in translate_storable"
   end.
 
 Polymorphic Definition translate_type (tm : term) : TemplateMonad type :=
-  match tm with
-  | tInd {| inductive_mind := (x, "unit") |} [] => tmReturn t_unit
-  | tInd {| inductive_mind := (_, "bool") |} [] => tmReturn t_bool
-  | tInd {| inductive_mind := (_, "nat") |} [] => tmReturn t_nat
-  | (tConst (MPdot (MPfile ["BinNatDef"; "NArith"; "Stdlib"]) "N", "t") []) => tmReturn t_ofst
-  | (tConst (MPdot (MPfile ("Pointer"::_)%list) "Pointer", "t") []%list) =>
-      tmReturn t_ptr
-  | tApp (tConst (MPfile ("Memval"::_), "obj") []) [storable] =>
-      translate_storable storable
-  (* Commented out for now because compilation time increases exponentially with match cases *)
-  (* | tApp (tConst (_, "program") []) _ => *)
-  (*     tmBind *)
-  (*       (tmPrint tm) *)
-  (*       (fun _ => tmFail (E_reify_type.not_base_type ++ " " ++ E_reify_type.first_class_use_of_program)) *)
-  | _ =>
-      tmBind
-        (tmPrint tm)
-        (fun _ => tmFail (E_reify_type.not_base_type ++ " Unknown context, good luck."))
+  match resolve_prim_type tm with
+  | Some t => tmEval cbv t
+  | None => tmPrint tm;; tmFail "Error in translate_type"
   end.
 
-Polymorphic Fixpoint translate_signature (sig: term): TemplateMonad (list (string * type) * type) :=
+Polymorphic Fixpoint translate_signature (sig: term): TemplateMonad (list (string * type) * type * ModelRef) :=
   match sig with
   | tApp (tConst (modpath, "program") []) [State; t_out] =>
       t_out <- translate_type t_out;;
-      tmReturn ([], t_out)
+      tmReturn ([], t_out, model_of_state State)
   | tPro arg t_arg sig =>
-      t_arg <- translate_type t_arg;;
-      '(args, t_out) <- translate_signature sig;;
-      tmEval cbv ((arg, t_arg)::args, t_out)
+      if is_state_structure t_arg then
+        '(args, t_out, _) <- translate_signature sig;;
+        tmEval cbv (args, t_out, ModelParam)
+      else
+        t_arg <- translate_type t_arg;;
+        '(args, t_out, model) <- translate_signature sig;;
+        tmEval cbv ((arg, t_arg)::args, t_out, model)
   | _ =>
       tmPrint sig;;
       tmFail "translate_signature: not a signature"
   end.
 
-(* Notes for future self, our lookup is currently very crude *)
-(* tInd is actually just a "smart identifier", i.e. it says little more than that there exists an inductive at a given path *)
-(* to find more about this inductive, we need lookup_inductive *)
-(* Provided a global environment it gives us (potentially):
- * - the mutual_inductive_body: the "full body" of the inductive, recall multiple mutually recursive inductives can be defined with Inductive I1 ... with I2 ...
- * - the one_inductive_body: the actual definition about the inductive we care about
- * If we want to support "light ADT", we will have to hook into this machinery
- *)
-
-Definition reify_type (ident : string) (A : Type) : TemplateMonad type :=
-  tm <- tmQuote A ;;
-  t <- translate_type tm;;
-  tmDefinition ident t.
+Polymorphic Definition introduce_new_external (renv: reify_funbody_env) (nm: kername): TemplateMonad (AST.ident * AST.external_function * reify_funbody_env) :=
+  let new_id: AST.ident := renv.(next_id) in
+  tm <- tmUnquote (tConst nm []);;
+  sig <- tmEval cbn tm.(my_projT1);;
+  sig <- tmQuote sig;;
+  '(args, t_out, _) <- translate_signature sig;;
+  (if List.existsb (fun '(_, t) => type_eqb t t_unit) args
+   then tmFail "External functions with unit arguments have unstable ABI"
+   else tmReturn tt);;
+  let new_external: AST.external_function :=
+    AST.EF_external
+      (String.to_string (snd nm))
+      (Prog.signature_of_signature (Prog.mk_signature (List.map snd args) t_out))
+  in
+  let renv: reify_funbody_env :=
+    {|
+      prog_renv :=
+        {|
+          next_id := Pos.succ renv.(next_id);
+          funs := (nm, (renv.(next_id), AST.External new_external))::renv.(funs);
+          current_module := renv.(current_module);
+        |};
+      stack := renv.(stack);
+      stack_depth := renv.(stack_depth);
+      temps := renv.(temps);
+      model := renv.(model);
+    |}
+  in
+  tmEval cbv (new_id, new_external, renv).

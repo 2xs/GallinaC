@@ -1,6 +1,30 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
 From Stdlib Require Export NArith Psatz.
 From Stdlib Require Import ssrfun.
 Import ssrfun.Option.
+From HB Require Import structures.
+
+From GallinaC.Utils Require NatExt.
+From GallinaC.Utils Require Import Algebra PosExt.
+
+HB.instance Definition _ := hasEqDec.Build N N.eqb N.eqb_spec.
 
 Local Open Scope N_scope.
 
@@ -68,4 +92,12 @@ Proof.
   unfold iter_opt.
   rewrite N.iter_succ_r; cbn; destruct (f a); auto.
   now rewrite iter_opt_None.
+Qed.
+
+Lemma iter_opt_of_nat [A: Type] (f: A -> option A) (n: nat) (a: A):
+  iter_opt f (N.of_nat n) a = NatExt.iter_opt f n a.
+Proof.
+  revert a; induction n as [ | n IH ]; intros a; [ reflexivity | ].
+  rewrite Nat2N.inj_succ, iter_opt_succ_r; cbn [NatExt.iter_opt].
+  destruct (f a) as [ a1 | ]; [ exact (IH a1) | reflexivity ].
 Qed.

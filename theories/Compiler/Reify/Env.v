@@ -1,13 +1,32 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
 From Stdlib Require Import PArith.
+From Stdlib Require Import Strings.String.
 
 From MetaRocq.Template Require Import All.
 
 From compcert.common Require AST.
+From compcert.backend Require Import SplitLong(sig_f_l, sig_l_f, sig_l_s, sig_ll_l, sig_li_l).
 
 From GallinaC.Utils Require Import ListExt.
 From GallinaC.Compiler.Common Require Import Types.
 From GallinaC.Compiler.Deep Require Import Cmd Prog.
-From GallinaC.Compiler.Reify Require Import Types.
 
 Import MonadNotation.
 Local Open Scope bs_scope.
@@ -18,13 +37,6 @@ Inductive binding: Set :=
 | Local (ofst: nat) (t: type)
 .
 
-Definition binding_to_string bind: string :=
-  match bind with
-  | Param mr_id cc_id _ => "Param(" ++ mr_id ++ ", " ++ string_of_positive cc_id ++ ")"
-  | Temp mr_id cc_id _ => "Temp(" ++ mr_id ++ ", " ++ string_of_positive cc_id ++ ")"
-  | Local ofst _ => "Local(" ++ string_of_nat ofst ++ ")"
-  end.
-
 Record reify_program_env :=
   {
     next_id : AST.ident;
@@ -34,12 +46,48 @@ Record reify_program_env :=
 
 Definition init_reify_env module : reify_program_env :=
   {|
-    next_id := 3%positive;
-    funs := [
-      ((MPfile [], "malloc"), (1%positive, AST.External AST.EF_malloc));
-      ((MPfile [], "free"), (2%positive, AST.External AST.EF_free))
-    ];
+    next_id := 18%positive;
+    funs := List.rev
+      [ ((MPfile [], "malloc"), (1%positive, AST.External AST.EF_malloc));
+        ((MPfile [], "free"), (2%positive, AST.External AST.EF_free));
+        ((MPfile [], "__compcert_i64_dtos"),
+          (3%positive, AST.External (AST.EF_runtime "__compcert_i64_dtos"%string sig_f_l)));
+        ((MPfile [], "__compcert_i64_dtou"),
+          (4%positive, AST.External (AST.EF_runtime "__compcert_i64_dtou"%string sig_f_l)));
+        ((MPfile [], "__compcert_i64_stod"),
+          (5%positive, AST.External (AST.EF_runtime "__compcert_i64_stod"%string sig_l_f)));
+        ((MPfile [], "__compcert_i64_utod"),
+          (6%positive, AST.External (AST.EF_runtime "__compcert_i64_utod"%string sig_l_f)));
+        ((MPfile [], "__compcert_i64_stof"),
+          (7%positive, AST.External (AST.EF_runtime "__compcert_i64_stof"%string sig_l_s)));
+        ((MPfile [], "__compcert_i64_utof"),
+          (8%positive, AST.External (AST.EF_runtime "__compcert_i64_utof"%string sig_l_s)));
+        ((MPfile [], "__compcert_i64_sdiv"),
+          (9%positive, AST.External (AST.EF_runtime "__compcert_i64_sdiv"%string sig_ll_l)));
+        ((MPfile [], "__compcert_i64_udiv"),
+          (10%positive, AST.External (AST.EF_runtime "__compcert_i64_udiv"%string sig_ll_l)));
+        ((MPfile [], "__compcert_i64_smod"),
+          (11%positive, AST.External (AST.EF_runtime "__compcert_i64_smod"%string sig_ll_l)));
+        ((MPfile [], "__compcert_i64_umod"),
+          (12%positive, AST.External (AST.EF_runtime "__compcert_i64_umod"%string sig_ll_l)));
+        ((MPfile [], "__compcert_i64_shl"),
+          (13%positive, AST.External (AST.EF_runtime "__compcert_i64_shl"%string sig_li_l)));
+        ((MPfile [], "__compcert_i64_shr"),
+          (14%positive, AST.External (AST.EF_runtime "__compcert_i64_shr"%string sig_li_l)));
+        ((MPfile [], "__compcert_i64_sar"),
+          (15%positive, AST.External (AST.EF_runtime "__compcert_i64_sar"%string sig_li_l)));
+        ((MPfile [], "__compcert_i64_umulh"),
+          (16%positive, AST.External (AST.EF_runtime "__compcert_i64_umulh"%string sig_ll_l)));
+        ((MPfile [], "__compcert_i64_smulh"),
+          (17%positive, AST.External (AST.EF_runtime "__compcert_i64_smulh"%string sig_ll_l)))
+      ];
     current_module := module; |}.
+
+Inductive ModelRef: Set :=
+| ModelParam
+| ModelKn (kn: kername)
+| ModelUnknown
+.
 
 Record reify_funbody_env: Type :=
   {
@@ -47,91 +95,8 @@ Record reify_funbody_env: Type :=
     stack: list binding;
     stack_depth: nat;
     temps: list (AST.ident * type);
+    model: ModelRef;
   }.
-
-Definition reify_funbody_env_to_string (renv: reify_funbody_env): string :=
-  ">>>>>>>>>>" ++ nl ++
-    ("next_id: " ++ string_of_positive renv.(next_id) ++ nl) ++
-    ("stack: [ " ++ List.fold_left (fun acc b => acc ++ binding_to_string b ++ ", ") renv.(stack) "" ++ " ]" ++ nl) ++
-    ("stack_depth: " ++ string_of_nat renv.(stack_depth) ++ nl) ++
-    ("funs: [ " ++ List.fold_left (fun acc '(i0, (i1, t)) => acc ++ (string_of_kername i0) ++ " " ++ string_of_positive i1 ++ ", ") renv.(funs) "" ++ " ]" ++ nl) ++
-    "<<<<<<<<<<"
-.
-
-Definition match_name nm b :=
-  match b with
-  | Param mr_id _ _ | Temp mr_id _ _ => if IdentOTOrig.eq_dec mr_id nm then true else false
-  | _ => false
-  end.
-Definition resolve_rel [A: Type] := @List.nth_error A.
-Definition resolve_rel_temp renv n :=
-  match resolve_rel renv.(stack) n with
-  | (Some (Param _ id _ | Temp _ id _)) as x => Some id
-  | _ => None
-  end.
-(* Definition resolve_rel_fun renv := resolve_rel renv.(funs). *)
-Definition resolve_named_temp renv nm :=
-  match List.find (match_name nm) renv.(stack) with
-  | (Some (Param _ id _ | Temp _ id _)) as x => Some id
-  | _ => None
-  end.
-Definition resolve_named_internal renv nm :=
-  match ListExt.sfind KernameSet.E.eq_dec nm renv.(funs) with
-  | Some (id, AST.Internal f) => Some (id, f)
-  | _ => None
-  end.
-Definition resolve_named_external' renv nm :=
-  match ListExt.sfind KernameSet.E.eq_dec nm renv.(funs) with
-  | Some (id, AST.External f) => Some (id, f)
-  | _ => None
-  end.
-Polymorphic Definition resolve_named_external (renv: reify_funbody_env) (nm: kername): TemplateMonad (AST.ident * AST.external_function * reify_funbody_env) :=
-  match resolve_named_external' renv nm with
-  | Some (id, f) => tmEval cbv (id, f, renv)
-  | None =>
-      match List.find (fun _ => false) renv.(funs) with
-      | Some (nm', _) =>
-          tmMsg "External function name clash";;
-          tmPrint nm;;
-          tmPrint nm';;
-          tmFail "resolve_named_external"
-      | None => tmReturn tt
-      end;;
-      let new_id: AST.ident := renv.(next_id) in
-      tm <- tmUnquote (tConst nm []);;
-      sig <- tmEval cbn tm.(my_projT1);;
-      sig <- tmQuote sig;;
-      '(args, t_out) <- translate_signature sig;;
-      let new_external: AST.external_function :=
-        AST.EF_external
-          (String.to_string (snd nm))
-          (signature_of_signature (mk_signature (List.map snd args) t_out))
-      in
-      let renv: reify_funbody_env :=
-        {|
-          prog_renv :=
-            {|
-              next_id := Pos.succ renv.(next_id);
-              funs := (nm, (renv.(next_id), AST.External new_external))::renv.(funs);
-              current_module := renv.(current_module);
-            |};
-          stack := renv.(stack);
-          stack_depth := renv.(stack_depth);
-          temps := renv.(temps);
-        |}
-      in
-      tmEval cbv (new_id, new_external, renv)
-  end
-.
-
-Fixpoint resolve_rel_locali st n :=
-  match st, n with
-  | [], _ => None
-  | Local ofst _::_, 0 => Some ofst
-  | _, 0 => None
-  | _::st, S n => resolve_rel_locali st n
-  end.
-Definition resolve_rel_local renv := resolve_rel_locali renv.(stack).
 
 Fixpoint pop_until_temp st id :=
   match st with
@@ -161,6 +126,7 @@ Definition push_temp (renv: reify_funbody_env) binder type : (reify_funbody_env 
                   end renv.(next_id) type)::renv.(stack);
       stack_depth := renv.(stack_depth);
       temps := List.app renv.(temps) [(renv.(next_id), type)];
+      model := renv.(model);
     |},
     renv.(next_id)).
 
@@ -169,7 +135,8 @@ Definition push_local (renv: reify_funbody_env) type : reify_funbody_env :=
       prog_renv := renv;
       stack := Local renv.(stack_depth) type::renv.(stack);
       stack_depth := S renv.(stack_depth);
-      temps := renv.(temps)
+      temps := renv.(temps);
+      model := renv.(model);
     |}.
 
 Definition drop_temp (renv: reify_funbody_env) temp_id: reify_funbody_env :=
@@ -178,6 +145,7 @@ Definition drop_temp (renv: reify_funbody_env) temp_id: reify_funbody_env :=
     stack := pop_until_temp renv.(stack) temp_id;
     stack_depth := renv.(stack_depth);
     temps := renv.(temps);
+    model := renv.(model);
   |}.
 
 Definition drop_local (renv: reify_funbody_env): reify_funbody_env :=
@@ -186,6 +154,7 @@ Definition drop_local (renv: reify_funbody_env): reify_funbody_env :=
     stack := pop_local renv.(stack);
     stack_depth := Nat.pred renv.(stack_depth);
     temps := renv.(temps);
+    model := renv.(model);
   |}.
 
 Definition push_fun (renv: reify_program_env) mr_id f :=

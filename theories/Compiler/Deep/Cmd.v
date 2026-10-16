@@ -1,8 +1,29 @@
+(*
+GallinaC: Unifying Verification and Certified Compilation of System Programs in Rocq
+Copyright (C) 2023-2026 GallinaC contributors (see CONTRIBUTORS.md)
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Lesser General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Lesser General Public License for more details.
+
+You should have received a copy of the GNU Lesser General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+*)
+
 From Stdlib Require Import Arith PArith.
 
+From HB Require Import structures.
+
+From GallinaC.Utils Require Import Algebra ListExt.
 From GallinaC.Compiler.Common Require Export Types Ctxt Expr.
 
-Inductive cmd : Type :=
+Inductive cmd : Set :=
 | c_ret : forall (e: expr), cmd
 | c_bind : forall (id_b: AST.ident) (t_b: type) (c_b c_c: cmd), cmd
 | c_if : forall (e_if: expr) (c_then c_else: cmd), cmd
@@ -21,6 +42,9 @@ Inductive cmd : Type :=
 | c_shift_bw_ptr : forall (e_ptr e_ofst: expr), cmd
 | c_ptr_eq : forall (e_ptr_l e_ptr_r: expr), cmd
 | c_app : forall (f_id: AST.ident) (args: list expr), cmd
+(* Numeric commands *)
+| c_div : forall (e_l e_r: expr), cmd
+| c_mod: forall (e_l e_r: expr), cmd
 .
 
 Fixpoint cmd_eqb (c1 c2: cmd): bool :=
@@ -57,6 +81,10 @@ Fixpoint cmd_eqb (c1 c2: cmd): bool :=
       (expr_eqb l1 l2 && expr_eqb r1 r2)
   | c_app f1 args1, c_app f2 args2 =>
       (Pos.eqb f1 f2 && ListExt.list_eqb expr_eqb args1 args2)%bool
+  | c_div l1 r1, c_div l2 r2 =>
+      (expr_eqb l1 l2 && expr_eqb r1 r2)%bool
+  | c_mod l1 r1, c_mod l2 r2 =>
+      (expr_eqb l1 l2 && expr_eqb r1 r2)%bool
   | _, _ => false
   end.
 
@@ -113,12 +141,52 @@ Proof.
   - destruct (Pos.eqb_spec f_id f_id0);
       destruct (ListExt.list_eqb_spec _ args args0 expr_eqb_spec);
       cbn; subst; constructor; congruence.
+  - destruct (expr_eqb_spec e_l e_l0);
+      destruct (expr_eqb_spec e_r e_r0);
+      cbn; subst; constructor; congruence.
+  - destruct (expr_eqb_spec e_l e_l0);
+      destruct (expr_eqb_spec e_r e_r0);
+      cbn; subst; constructor; congruence.
 Qed.
 
-Definition cmd_eq_dec: forall (x y: cmd), { x = y } + { x <> y } :=
-  ReflectExt.eq_dec_of_reflect cmd_eqb_spec.
+HB.instance Definition _ := hasEqDec.Build cmd cmd_eqb cmd_eqb_spec.
 
 Definition cmd_eqb_refl: forall c, cmd_eqb c c = true :=
   ReflectExt.reflect_refl cmd_eqb_spec.
 #[global] Hint Resolve cmd_eqb_refl: deep_gallinac.
 #[global] Hint Rewrite cmd_eqb_refl: deep_gallinac.
+
+Fixpoint cmd_temps (c: cmd): list (AST.ident * type) :=
+  match c with
+  | c_bind b_id t_b c_b c_c => (b_id, t_b) :: cmd_temps c_b ++ cmd_temps c_c
+  | c_if _ c_then c_else => cmd_temps c_then ++ cmd_temps c_else
+  | c_while c_cond c_body => cmd_temps c_cond ++ cmd_temps c_body
+  | c_with_var _ _ c_c => cmd_temps c_c
+  | c_ret _
+  | c_read_var _ _ | c_write_var _ _ _
+  | c_alloc_ptr _ _ _ | c_read_ptr _ _
+  | c_write_ptr _ _ _ | c_free_ptr _
+  | c_shift_fw_ptr _ _ | c_shift_bw_ptr _ _
+  | c_ptr_eq _ _
+  | c_app _ _
+  | c_div _ _ | c_mod _ _
+                => []
+  end.
+
+Lemma cmd_temps_bind b_id t_b c_b c_c:
+  cmd_temps (c_bind b_id t_b c_b c_c)
+  = (b_id, t_b) :: cmd_temps c_b ++ cmd_temps c_c.
+Proof. reflexivity. Qed.
+
+Lemma cmd_temps_if e c_t c_e:
+  cmd_temps (c_if e c_t c_e) = cmd_temps c_t ++ cmd_temps c_e.
+Proof. reflexivity. Qed.
+
+Lemma cmd_temps_while c_cond c_body:
+  cmd_temps (c_while c_cond c_body)
+  = cmd_temps c_cond ++ cmd_temps c_body.
+Proof. reflexivity. Qed.
+
+Lemma cmd_temps_with_var t_v e_v c_c:
+  cmd_temps (c_with_var t_v e_v c_c) = cmd_temps c_c.
+Proof. reflexivity. Qed.

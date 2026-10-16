@@ -1,0 +1,15 @@
+build-job:
+  image:
+    name: "frfort/gallinac:base"
+  script:
+    - make
+    - make examples
+    - make extraction
+    - make reversec
+    - make reverse
+    - ./reverse
+  artifacts:
+    name: "Reverse example"
+    paths:
+      - ./reverse
+    expire_in: 1 month
